@@ -7,41 +7,43 @@ options(shiny.maxRequestSize=30*1024^2)
 ui <- dashboardPage(
   skin = "red",
   dashboardHeader(title = "IIS Log Analysis"),
-  dashboardSidebar(sidebarMenu(
-    menuItem("Dashboard", tabName = "dashboard")
-  )),
+  dashboardSidebar(
+    fluidRow(
+      box(width = 12,
+        "File upload",
+        background = "green",
+        fileInput("filename", "Choose file to upload:",
+                  accept = c("text/csv",
+                             "text/plain",
+                             "text/comma-separated-values",
+                             ".csv")
+        )
+      )        
+    ),
+    fluidRow(
+      box(width = 12,
+        "Time selection",
+        background = "teal",
+        textInput(
+          "from",
+          "From",
+          value = "00:00:00"
+        ),
+        textInput(
+          "to",
+          "To",
+          value = "23:59:59"
+        )
+      )
+    ),
+    sidebarMenu(
+      menuItem("Dashboard", tabName = "dashboard")
+    )
+  ),
   
   dashboardBody(tabItems(
     tabItem(
       "dashboard",
-      fluidRow(
-        box(
-          "File upload",
-          background = "green",
-          fileInput("filename", "Choose file to upload:",
-                    accept = c("text/csv",
-                               "text/plain",
-                               "text/comma-separated-values",
-                               ".csv")
-          )
-        )        
-      ),
-      fluidRow(
-        box(
-          "Time selection",
-          background = "teal",
-          textInput(
-            "from",
-            "From",
-            value = "00:00:00"
-          ),
-          textInput(
-            "to",
-            "To",
-            value = "23:59:59"
-          )
-        )
-      ),
       fluidRow(
         valueBoxOutput("start"),
         valueBoxOutput("end")
@@ -58,12 +60,13 @@ ui <- dashboardPage(
   ))
 )
 
-server <- function(input, output) {
+server <- function(input, output, session) {
   dataInput <- reactive({
-    if (is.null(input$filename))
-      return(NULL)
+    # if (is.null(input$filename))
+    #   return(NULL)
     
-    iis <- read_delim(input$filename$datapath, " ", 
+#     iis <- read_delim(input$filename$datapath, " ", 
+    iis <- read_delim("../iislogging_data/iis.log", " ", 
                       escape_double = FALSE, col_names = FALSE, trim_ws = TRUE,
                       col_types = paste0(rep("c", 15), collapse = ""),
                       na = "-", comment = "#")
@@ -84,25 +87,40 @@ server <- function(input, output) {
                        "sc-win32-status",
                        "timetaken")
     
+    basedate <- as.POSIXct(as.character(iis[1, "date"]), format = "%Y-%m-%d")
+    iis$time <- as.POSIXct(paste(iis$date, iis$time))
+    iis <- iis[, -1]
+
+    # still struggeling with dates...
+    colnames(iis)[1] <- "timestamp" 
+    min_ts <- format(iis[1, "timestamp"], "%Y-%m-%d %H:%M:%S")
+    max_ts <- iis[nrow(iis), "timestamp"]
+    
     iis$timetaken <- as.numeric(iis$timetaken)
-    iis$time <- as.hms(iis$time)
     
-    from = input$from
-    to = input$to
+    # still struggeling with dates...
+    from = as.POSIXct(paste(basedate, input$from))
+    if (is.na(from)) {
+      from = format(min_ts, format = "%H:%M:%S")
+      updateTextInput(session, "from", value = from)
+    }
+    to = as.POSIXct(paste(basedate, input$to))
+    if (is.na(to))
+      to = as.POSIXct(max_ts)
     
-    cat("from: ", from, "\n")
-    cat("to: ", to, "\n")
+    cat("from: ", as.character(from), "\n")
+    cat("to: ", as.character(to), "\n")
     
     # this is not working properly
-    if (is.na(from) || identical(from, ""))
-       from = as.hms(min(iis$time))
-    if (is.na(to) || identical(to, ""))
-      to = as.hms(max(iis$time))
+    # if (is.na(from) || identical(from, ""))
+    #    from = as.hms(min(iis$time))
+    # if (is.na(to) || identical(to, ""))
+    #   to = as.hms(max(iis$time))
 
-    cat("from2: ", from, "\n")
-    cat("to2: ", to, "\n")
-
-    selectedtimes <- iis[iis$time >= as.hms(from) & iis$time <= as.hms(to), ]
+    cat("from2: ", as.character(from), "\n")
+    cat("to2: ", as.character(to), "\n")
+    
+    selectedtimes <- iis[iis$timestamp >= from & iis$timestamp <= to, ]
     
     return(selectedtimes)
   })
@@ -112,7 +130,7 @@ server <- function(input, output) {
     if (is.null(x))
       v = 0
     else
-      v = as.hms(min(x$time))
+      v = as.character(min(x$timestamp), format = "%H:%M:%S")
     valueBox(
       value = v,
       subtitle = "Start time",
@@ -126,7 +144,7 @@ server <- function(input, output) {
     if (is.null(x))
       v = 0
     else
-      v = as.hms(max(x$time))
+      v = as.character(max(x$timestamp), format = "%H:%M:%S")
     
     valueBox(
       value = v,
