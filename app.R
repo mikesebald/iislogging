@@ -91,43 +91,31 @@ server <- function(input, output, session) {
     iis$time <- as.POSIXct(paste(iis$date, iis$time))
     iis <- iis[, -1]
 
-    # still struggeling with dates...
     colnames(iis)[1] <- "timestamp" 
-    min_ts <- format(iis[1, "timestamp"], "%Y-%m-%d %H:%M:%S")
-    max_ts <- iis[nrow(iis), "timestamp"]
+    min_ts <- iis[[1, "timestamp"]]
+    max_ts <- iis[[nrow(iis), "timestamp"]]
     
     iis$timetaken <- as.numeric(iis$timetaken)
     
-    # still struggeling with dates...
+    # Updating input fields not working correctly
     from = as.POSIXct(paste(basedate, input$from))
-    if (is.na(from)) {
-      from = format(min_ts, format = "%H:%M:%S")
-      updateTextInput(session, "from", value = from)
+    if (from == basedate) {
+      from = min_ts
+    #  updateTextInput(session, "from", value = paste(from))
     }
     to = as.POSIXct(paste(basedate, input$to))
-    if (is.na(to))
-      to = as.POSIXct(max_ts)
-    
-    cat("from: ", as.character(from), "\n")
-    cat("to: ", as.character(to), "\n")
-    
-    # this is not working properly
-    # if (is.na(from) || identical(from, ""))
-    #    from = as.hms(min(iis$time))
-    # if (is.na(to) || identical(to, ""))
-    #   to = as.hms(max(iis$time))
+    if (to == basedate) {
+      to = max_ts
+    #  updateTextInput(session, "to", value = paste(to))
+    }
 
-    cat("from2: ", as.character(from), "\n")
-    cat("to2: ", as.character(to), "\n")
-    
     selectedtimes <- iis[iis$timestamp >= from & iis$timestamp <= to, ]
-    
     return(selectedtimes)
   })
 
   output$start <- renderValueBox({
     x <- dataInput()
-    if (is.null(x))
+    if (nrow(x) == 0)
       v = 0
     else
       v = as.character(min(x$timestamp), format = "%H:%M:%S")
@@ -141,7 +129,7 @@ server <- function(input, output, session) {
   
   output$end <- renderValueBox({
     x <- dataInput()
-    if (is.null(x))
+    if (nrow(x) == 0)
       v = 0
     else
       v = as.character(max(x$timestamp), format = "%H:%M:%S")
@@ -156,7 +144,7 @@ server <- function(input, output, session) {
   
   output$min <- renderValueBox({
     x <- dataInput()
-    if (is.null(x))
+    if (nrow(x) == 0)
       v = 0
     else
       v = as.character(min(x$timetaken))
@@ -171,11 +159,11 @@ server <- function(input, output, session) {
   
   output$max <- renderValueBox({
     x <- dataInput()
-    if (is.null(x))
+    if (nrow(x) == 0)
       v = 0
     else
       v = as.character(max(x$timetaken))
-    
+
     valueBox(
       value = v,
       subtitle = "Maximum time",
@@ -186,7 +174,7 @@ server <- function(input, output, session) {
 
   output$mean <- renderValueBox({
     x <- dataInput()
-    if (is.null(x))
+    if (nrow(x) == 0)
       v = 0
     else
       v = as.character(round(mean(x$timetaken), 1))
@@ -201,7 +189,7 @@ server <- function(input, output, session) {
 
   output$median <- renderValueBox({
     x <- dataInput()
-    if (is.null(x))
+    if (nrow(x) == 0)
       v = 0
     else
       v = as.character(median(x$timetaken))
