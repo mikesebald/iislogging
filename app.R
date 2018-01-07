@@ -5,7 +5,7 @@ library(hms)
 options(shiny.maxRequestSize=30*1024^2)
 
 ui <- dashboardPage(
-  skin = "red",
+  # skin = "red",
   dashboardHeader(title = "IIS Log Analysis"),
   dashboardSidebar(
     fluidRow(
@@ -37,27 +37,39 @@ ui <- dashboardPage(
       )
     ),
     sidebarMenu(
-      menuItem("Dashboard", tabName = "dashboard")
+      menuItem("Dashboard", tabName = "dashboard"),
+      menuItem("Requests", tabName = "requests")
     )
   ),
   
-  dashboardBody(tabItems(
-    tabItem(
-      "dashboard",
-      fluidRow(
-        valueBoxOutput("start"),
-        valueBoxOutput("end")
-      ),
-      fluidRow(
-        valueBoxOutput("min"),
-        valueBoxOutput("max")
-      ),
-      fluidRow(
-        valueBoxOutput("mean"),
-        valueBoxOutput("median")
+  dashboardBody(
+    tabItems(
+      tabItem(
+        "dashboard",
+        fluidRow(
+          valueBoxOutput("start"),
+          valueBoxOutput("end"),
+          valueBoxOutput("requests")
+        ),
+        fluidRow(
+          valueBoxOutput("min"),
+          valueBoxOutput("max"),
+          valueBoxOutput("mean")
+        ),
+        fluidRow(
+          plotOutput("timetakenHist")
+        )
+      # not working with second tabItem. why???  
+      # ),
+      # tabItem("requests",
+      #   fluidRow(
+      #     valueBoxOutput("requests2"),
+      #     valueBoxOutput("start2"),
+      #     valueBoxOutput("start2")
+      #   )
       )
     )
-  ))
+  )
 )
 
 server <- function(input, output, session) {
@@ -73,18 +85,18 @@ server <- function(input, output, session) {
     
     colnames(iis) <- c("date",
                        "time",
-                       "s-ip",
-                       "cs-method",
-                       "cs-uri-stem",
-                       "cs-uri-query",
-                       "s-port",
-                       "cs-username",
-                       "c-ip",
-                       "cs(User-Agent)",
-                       "cs(Referer)",
-                       "sc-status",
-                       "sc-substatus",
-                       "sc-win32-status",
+                       "sip",
+                       "csmethod",
+                       "csuristem",
+                       "csuriquery",
+                       "sport",
+                       "csusername",
+                       "cip",
+                       "csUserAgent",
+                       "csReferer",
+                       "scstatus",
+                       "scsubstatus",
+                       "scwin32status",
                        "timetaken")
     
     basedate <- as.POSIXct(as.character(iis[1, "date"]), format = "%Y-%m-%d")
@@ -123,7 +135,7 @@ server <- function(input, output, session) {
       value = v,
       subtitle = "Start time",
       color = "yellow",
-      icon = icon("hourglass-start")
+      icon = icon("log-out", lib = "glyphicon")
     )
   })
   
@@ -138,7 +150,7 @@ server <- function(input, output, session) {
       value = v,
       subtitle = "End time",
       color = "yellow",
-      icon = icon("hourglass-end")
+      icon = icon("log-in", lib = "glyphicon")
     )
   })
   
@@ -153,7 +165,7 @@ server <- function(input, output, session) {
       value = v,
       subtitle = "Minimum time",
       color = "green",
-      icon = icon("arrow-up")
+      icon = icon("time", lib = "glyphicon")
     )
   })
   
@@ -168,7 +180,7 @@ server <- function(input, output, session) {
       value = v,
       subtitle = "Maximum time",
       color = "red",
-      icon = icon("arrow-down")
+      icon = icon("time", lib = "glyphicon")
     )
   })
 
@@ -183,22 +195,34 @@ server <- function(input, output, session) {
       value = v,
       subtitle = "Mean time",
       color = "blue",
-      icon = icon("arrow-left")
+      icon = icon("time", lib = "glyphicon")
     )
   })
 
-  output$median <- renderValueBox({
+  output$requests <- renderValueBox({
     x <- dataInput()
     if (nrow(x) == 0)
       v = 0
     else
-      v = as.character(median(x$timetaken))
+      v = as.character(nrow(x))
     
     valueBox(
       value = v,
-      subtitle = "Median time",
-      color = "navy",
-      icon = icon("arrow-right")
+      subtitle = "Number of requests",
+      color = "fuchsia",
+      icon = icon("road", lib = "glyphicon")
+    )
+  })
+  
+  output$timetakenHist <- renderPlot({
+    x <- dataInput()
+    hist(
+      as.numeric(x$timetaken),
+      main = "Distribution of time-taken",
+      xlab = "time-taken interval [secs]",
+      ylab = "Number of requests per interval",
+      col = "#75AADB", 
+      border = "white"
     )
   })
 }
