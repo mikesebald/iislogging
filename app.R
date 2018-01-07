@@ -1,6 +1,5 @@
 library(shinydashboard)
 library(readr)
-library(hms)
 
 options(shiny.maxRequestSize=30*1024^2)
 
@@ -16,7 +15,8 @@ ui <- dashboardPage(
                   accept = c("text/csv",
                              "text/plain",
                              "text/comma-separated-values",
-                             ".csv")
+                             ".csv",
+                             ".log")
         )
       )        
     ),
@@ -74,11 +74,11 @@ ui <- dashboardPage(
 
 server <- function(input, output, session) {
   dataInput <- reactive({
-    # if (is.null(input$filename))
-    #   return(NULL)
+    if (is.null(input$filename))
+      return(NULL)
     
-#     iis <- read_delim(input$filename$datapath, " ", 
-    iis <- read_delim("../iislogging_data/iis.log", " ", 
+    iis <- read_delim(input$filename$datapath, " ", 
+#    iis <- read_delim("../iislogging_data/iis.log", " ", 
                       escape_double = FALSE, col_names = FALSE, trim_ws = TRUE,
                       col_types = paste0(rep("c", 15), collapse = ""),
                       na = "-", comment = "#")
@@ -127,7 +127,7 @@ server <- function(input, output, session) {
 
   output$start <- renderValueBox({
     x <- dataInput()
-    if (nrow(x) == 0)
+    if (is.null(x) || nrow(x) == 0)
       v = 0
     else
       v = as.character(min(x$timestamp), format = "%H:%M:%S")
@@ -141,7 +141,7 @@ server <- function(input, output, session) {
   
   output$end <- renderValueBox({
     x <- dataInput()
-    if (nrow(x) == 0)
+    if (is.null(x) || nrow(x) == 0)
       v = 0
     else
       v = as.character(max(x$timestamp), format = "%H:%M:%S")
@@ -156,7 +156,7 @@ server <- function(input, output, session) {
   
   output$min <- renderValueBox({
     x <- dataInput()
-    if (nrow(x) == 0)
+    if (is.null(x) || nrow(x) == 0)
       v = 0
     else
       v = as.character(min(x$timetaken))
@@ -171,7 +171,7 @@ server <- function(input, output, session) {
   
   output$max <- renderValueBox({
     x <- dataInput()
-    if (nrow(x) == 0)
+    if (is.null(x) || nrow(x) == 0)
       v = 0
     else
       v = as.character(max(x$timetaken))
@@ -186,7 +186,7 @@ server <- function(input, output, session) {
 
   output$mean <- renderValueBox({
     x <- dataInput()
-    if (nrow(x) == 0)
+    if (is.null(x) || nrow(x) == 0)
       v = 0
     else
       v = as.character(round(mean(x$timetaken), 1))
@@ -201,7 +201,7 @@ server <- function(input, output, session) {
 
   output$requests <- renderValueBox({
     x <- dataInput()
-    if (nrow(x) == 0)
+    if (is.null(x) || nrow(x) == 0)
       v = 0
     else
       v = as.character(nrow(x))
@@ -216,14 +216,16 @@ server <- function(input, output, session) {
   
   output$timetakenHist <- renderPlot({
     x <- dataInput()
-    hist(
-      as.numeric(x$timetaken),
-      main = "Distribution of time-taken",
-      xlab = "time-taken interval [secs]",
-      ylab = "Number of requests per interval",
-      col = "#75AADB", 
-      border = "white"
-    )
+    if (!is.null(x)) { 
+      hist(
+        as.numeric(x$timetaken),
+        main = "Distribution of time-taken",
+        xlab = "time-taken interval [secs]",
+        ylab = "Number of requests per interval",
+        col = "#75AADB", 
+        border = "white"
+      )
+    }
   })
 }
 
