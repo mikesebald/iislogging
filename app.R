@@ -1,5 +1,6 @@
 library(shinydashboard)
 library(readr)
+library(shinyTime)
 
 options(shiny.maxRequestSize=30*1024^2)
 
@@ -11,11 +12,10 @@ ui <- dashboardPage(
       box(width = 12,
         "File upload",
         background = "green",
-        fileInput("filename", "Choose file to upload:",
+        fileInput("file", "Choose file to upload:",
                   accept = c("text/csv",
                              "text/plain",
                              "text/comma-separated-values",
-                             ".csv",
                              ".log")
         )
       )        
@@ -24,15 +24,19 @@ ui <- dashboardPage(
       box(width = 12,
         "Time selection",
         background = "teal",
-        textInput(
+        timeInput(
           "from",
-          "From",
-          value = "00:00:00"
+          "From:",
+          value = strptime("00:00:00", "%T")
         ),
-        textInput(
+        timeInput(
           "to",
-          "To",
-          value = "23:59:59"
+          "To:",
+          value = strptime("23:59:59", "%T")
+        ),
+        actionButton(
+          "gobutton",
+          "Go!"
         )
       )
     ),
@@ -58,6 +62,9 @@ ui <- dashboardPage(
         ),
         fluidRow(
           plotOutput("timetakenHist")
+        ),
+        fluidRow(
+          plotOutput("reqtypePlot")
         )
       # not working with second tabItem. why???  
       # ),
@@ -74,15 +81,16 @@ ui <- dashboardPage(
 
 server <- function(input, output, session) {
   dataInput <- reactive({
-    if (is.null(input$filename))
+    cat("Reading file...")
+    if (is.null(input$file))
       return(NULL)
-    
-    iis <- read_delim(input$filename$datapath, " ", 
-#    iis <- read_delim("../iislogging_data/iis.log", " ", 
+
+    iis <- read_delim(input$file$datapath, " ",
+    # iis <- read_delim("../iislogging_data/iis.log", " ",
                       escape_double = FALSE, col_names = FALSE, trim_ws = TRUE,
                       col_types = paste0(rep("c", 15), collapse = ""),
                       na = "-", comment = "#")
-    
+
     colnames(iis) <- c("date",
                        "time",
                        "sip",
@@ -98,39 +106,59 @@ server <- function(input, output, session) {
                        "scsubstatus",
                        "scwin32status",
                        "timetaken")
-    
-    basedate <- as.POSIXct(as.character(iis[1, "date"]), format = "%Y-%m-%d")
+
     iis$time <- as.POSIXct(paste(iis$date, iis$time))
-    iis <- iis[, -1]
 
-    colnames(iis)[1] <- "timestamp" 
-    min_ts <- iis[[1, "timestamp"]]
-    max_ts <- iis[[nrow(iis), "timestamp"]]
-    
+    iis$reqtype <- ""
+    iis$reqtype[iis$csmethod == "GET" & !is.na(iis$csuriquery)] <- "SEARCH"
+    iis$reqtype[iis$csmethod == "GET" & is.na(iis$csuriquery)] <- "GET"
+    iis$reqtype[iis$csmethod == "PUT"] <- "PUT"
+    iis$reqtype[iis$csmethod == "POST"] <- "POST"
+    iis$reqtype[iis$csmethod == "DELETE"] <- "DELETE"
+
+    colnames(iis)[2] <- "timestamp"
     iis$timetaken <- as.numeric(iis$timetaken)
-    
-    # Updating input fields not working correctly
-    from = as.POSIXct(paste(basedate, input$from))
-    if (from == basedate) {
-      from = min_ts
-    #  updateTextInput(session, "from", value = paste(from))
-    }
-    to = as.POSIXct(paste(basedate, input$to))
-    if (to == basedate) {
-      to = max_ts
-    #  updateTextInput(session, "to", value = paste(to))
-    }
 
-    selectedtimes <- iis[iis$timestamp >= from & iis$timestamp <= to, ]
-    return(selectedtimes)
+    cat("done.\n")
+
+    return(iis)
+  })
+
+  observeEvent(input$file, {
+    dataInput()
+  })
+  
+  datasetUpdate <- eventReactive(input$gobutton, {
+    iis <- dataInput()
+    if (is.null(iis))
+      return(NULL)
+    else {
+      basedate <- as.POSIXct(as.character(iis[1, "date"]), format = "%Y-%m-%d")
+      
+      min_ts <- iis[[1, "timestamp"]]
+      max_ts <- iis[[nrow(iis), "timestamp"]]
+
+      from = as.POSIXct(paste(basedate, format(input$from, "%T")))
+      if (from == basedate)
+        from = min_ts
+      to = as.POSIXct(paste(basedate, format(input$to, "%T")))
+      if (to == basedate)
+        to = max_ts
+
+      selectedtimes <- iis[iis$timestamp >= from & iis$timestamp <= to, ]
+      print(paste("from:", from, "to:", to))
+      
+      return(selectedtimes)
+    }
   })
 
   output$start <- renderValueBox({
-    x <- dataInput()
+    x <- datasetUpdate()
     if (is.null(x) || nrow(x) == 0)
       v = 0
     else
       v = as.character(min(x$timestamp), format = "%H:%M:%S")
+    
     valueBox(
       value = v,
       subtitle = "Start time",
@@ -138,14 +166,14 @@ server <- function(input, output, session) {
       icon = icon("log-out", lib = "glyphicon")
     )
   })
-  
+
   output$end <- renderValueBox({
-    x <- dataInput()
+    x <- datasetUpdate()
     if (is.null(x) || nrow(x) == 0)
       v = 0
     else
       v = as.character(max(x$timestamp), format = "%H:%M:%S")
-    
+
     valueBox(
       value = v,
       subtitle = "End time",
@@ -153,14 +181,14 @@ server <- function(input, output, session) {
       icon = icon("log-in", lib = "glyphicon")
     )
   })
-  
+
   output$min <- renderValueBox({
-    x <- dataInput()
+    x <- datasetUpdate()
     if (is.null(x) || nrow(x) == 0)
       v = 0
     else
       v = as.character(min(x$timetaken))
-    
+
     valueBox(
       value = v,
       subtitle = "Minimum time",
@@ -168,9 +196,9 @@ server <- function(input, output, session) {
       icon = icon("time", lib = "glyphicon")
     )
   })
-  
+
   output$max <- renderValueBox({
-    x <- dataInput()
+    x <- datasetUpdate()
     if (is.null(x) || nrow(x) == 0)
       v = 0
     else
@@ -185,12 +213,12 @@ server <- function(input, output, session) {
   })
 
   output$mean <- renderValueBox({
-    x <- dataInput()
+    x <- datasetUpdate()
     if (is.null(x) || nrow(x) == 0)
       v = 0
     else
       v = as.character(round(mean(x$timetaken), 1))
-    
+
     valueBox(
       value = v,
       subtitle = "Mean time",
@@ -200,12 +228,12 @@ server <- function(input, output, session) {
   })
 
   output$requests <- renderValueBox({
-    x <- dataInput()
+    x <- datasetUpdate()
     if (is.null(x) || nrow(x) == 0)
       v = 0
     else
       v = as.character(nrow(x))
-    
+
     valueBox(
       value = v,
       subtitle = "Number of requests",
@@ -213,16 +241,30 @@ server <- function(input, output, session) {
       icon = icon("road", lib = "glyphicon")
     )
   })
-  
+
   output$timetakenHist <- renderPlot({
-    x <- dataInput()
-    if (!is.null(x)) { 
+    x <- datasetUpdate()
+    if (!is.null(x)) {
       hist(
         as.numeric(x$timetaken),
         main = "Distribution of time-taken",
         xlab = "time-taken interval [secs]",
         ylab = "Number of requests per interval",
-        col = "#75AADB", 
+        col = "#75AADB",
+        border = "white"
+      )
+    }
+  })
+
+  output$reqtypePlot <- renderPlot({
+    x <- datasetUpdate()
+    if (!is.null(x)) {
+      barplot(
+        table(x$reqtype),
+        main = "Request types",
+        xlab = "Request type",
+        ylab = "Number of requests per type",
+        col = "#75AADB",
         border = "white"
       )
     }
