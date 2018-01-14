@@ -3,6 +3,10 @@ library(readr)
 library(shinyTime)
 library(dplyr)
 library(ggplot2)
+library(dygraphs)
+# library(zoo)
+library(xts)
+
 
 options(shiny.maxRequestSize=30*1024^2)
 
@@ -72,6 +76,10 @@ ui <- dashboardPage(
         br(),
         fluidRow(
           plotOutput("reqperfPlot")
+        ),
+        br(),
+        fluidRow(
+          dygraphOutput("dygraph")
         )
       # not working with second tabItem. why???  
       # ),
@@ -287,7 +295,6 @@ server <- function(input, output, session) {
 
       reqperf$window <- as.POSIXct(reqperf$window)
       
-      print(reqperf)
       p <- ggplot(reqperf, aes(x = reqperf$window, y = reqperf$requests)) +
         geom_line() +
         scale_x_datetime() +
@@ -298,6 +305,28 @@ server <- function(input, output, session) {
     }
   })
   
+  output$dygraph <- renderDygraph({
+    x <- datasetUpdate()
+    if (!is.null(x)) {
+      reqperf <- x %>%
+        mutate(window = cut(timestamp, "min")) %>%
+        group_by(window) %>%
+        summarise(requests = n())
+      
+      # reqperf$window <- as.POSIXct(reqperf$window)
+
+      reqperf_n <- zoo(reqperf)
+      print(reqperf)
+      output$dygraph <- renderDygraph(
+        dygraph(data = reqperf, main = "Requests per minute") %>% 
+          dyHighlight(highlightCircleSize = 5,
+                      highlightSeriesBackgroundAlpha = 0.2,
+                      hideOnMouseOut = FALSE, highlightSeriesOpts = list(strokeWidth = 3)) %>%
+          dyRangeSelector()
+      )      
+      
+    }
+  })
 }
 
 # Run the application
