@@ -1,5 +1,6 @@
 library(readr)
 library(dplyr)
+library(tidyr)
 library(dygraphs)
 library(xts)
 
@@ -38,24 +39,16 @@ iis$timetaken <- as.numeric(iis$timetaken)
 
 df <- iis[, c("timestamp", "reqtype")]
 
-reqperfbytype <- mutate(df, twindow = cut(timestamp, breaks = "1 mins")) %>%
-  group_by(twindow, reqtype) %>%
-  summarise(counter = n())
+reqperf <- mutate(df, twindow = cut(timestamp, breaks = "1 mins")) %>%
+  group_by(twindow, reqtype)
 
-reqperfabs <- mutate(df, twindow = cut(timestamp, breaks = "1 mins")) %>%
-  group_by(twindow) %>%
-  summarise(counter = n())
+reqperf <- spread(reqperf, reqtype, counter)
 
-reqperfabs_xts <- xts(reqperfabs$counter, 
-                      order.by = as.POSIXct(reqperfabs$twindow))
-dygraph(data = reqperfabs_xts, main = "Requests per minute") %>% 
-  dySeries("V1", label = "Requests") %>%
+reqperf_xts <- xts(reqperf[, -1], 
+                   order.by = as.POSIXct(reqperf$twindow))
+dygraph(data = reqperf_xts, main = "Requests per minute") %>% 
   dyHighlight(highlightCircleSize = 5,
               highlightSeriesBackgroundAlpha = 0.2,
               hideOnMouseOut = FALSE, highlightSeriesOpts = list(strokeWidth = 3)) %>%
   dyRangeSelector()
 
-# this doesn't work:
-reqperfbytype_xts <- xts(reqperfbytype[, -3], 
-                        order.by = as.POSIXct(reqperfbytype$twindow))
-dygraph(reqperfbytype_xts)
