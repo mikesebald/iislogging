@@ -2,11 +2,10 @@ library(shinydashboard)
 library(readr)
 library(shinyTime)
 library(dplyr)
+library(tidyr)
 library(ggplot2)
 library(dygraphs)
-# library(zoo)
 library(xts)
-
 
 options(shiny.maxRequestSize=30*1024^2)
 
