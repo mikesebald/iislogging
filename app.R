@@ -1,178 +1,167 @@
+library(lubridate)
 library(shinydashboard)
-library(readr)
-library(shinyTime)
 library(dplyr)
-library(tidyr)
-library(ggplot2)
+library(readr)
+library(stringr)
 library(dygraphs)
 library(xts)
+library(ggplot2)
 
-options(shiny.maxRequestSize=30*1024^2)
+options(shiny.maxRequestSize=100*1024^2)
 
 ui <- dashboardPage(
-  # skin = "red",
+  skin = "red",
   dashboardHeader(title = "IIS Log Analysis"),
   dashboardSidebar(
     fluidRow(
       box(width = 12,
-        "File upload",
-        background = "green",
-        fileInput("file", "Choose file to upload:",
-                  accept = c("text/csv",
-                             "text/plain",
-                             "text/comma-separated-values",
-                             ".log")
-        )
-      )        
-    ),
-    fluidRow(
+          background = "light-blue",
+          radioButtons("source", "Log file source:",
+                       c("CDH" = "cdh",
+                         "IIS" = "iis")
+          )
+      ),
       box(width = 12,
-        "Time selection",
-        background = "teal",
-        timeInput(
-          "from",
-          "From:",
-          value = strptime("00:00:00", "%T")
-        ),
-        timeInput(
-          "to",
-          "To:",
-          value = strptime("23:59:59", "%T")
-        ),
-        actionButton(
-          "gobutton",
-          "Go!"
-        )
+          background = "light-blue",
+          fileInput("file", "Choose file to upload:",
+                    accept = c("text/csv",
+                               "text/plain",
+                               ".log")
+          )
       )
-    ),
-    sidebarMenu(
-      menuItem("Dashboard", tabName = "dashboard"),
-      menuItem("Requests", tabName = "requests")
     )
   ),
-  
   dashboardBody(
-    tabItems(
-      tabItem(
-        "dashboard",
-        fluidRow(
-          valueBoxOutput("start"),
-          valueBoxOutput("end"),
-          valueBoxOutput("requests")
-        ),
-        fluidRow(
-          valueBoxOutput("min"),
-          valueBoxOutput("max"),
-          valueBoxOutput("mean")
-        ),
-        fluidRow(
-          plotOutput("timetakenHist")
-        ),
-        br(),
-        fluidRow(
-          plotOutput("reqtypePlot")
-        ),
-        br(),
-        fluidRow(
-          plotOutput("reqperfPlot")
-        ),
-        br(),
-        fluidRow(
-          dygraphOutput("dygraph")
-        )
-      # not working with second tabItem. why???  
-      # ),
-      # tabItem("requests",
-      #   fluidRow(
-      #     valueBoxOutput("requests2"),
-      #     valueBoxOutput("start2"),
-      #     valueBoxOutput("start2")
-      #   )
-      )
+    fluidRow(
+      valueBoxOutput("reqstart"),
+      valueBoxOutput("reqend"),
+      valueBoxOutput("requests_cdh")
+    ),
+    fluidRow(
+      valueBoxOutput("min_cdh"),
+      valueBoxOutput("max_cdh"),
+      valueBoxOutput("mean_cdh")
+    ),
+    # br(),
+    # fluidRow(
+    #   plotOutput("reqtypePlot")
+    # ),
+    # br(),
+    # fluidRow(
+    #   plotOutput("reqperfPlot")
+    # ),
+    # br(),
+    fluidRow(
+      dygraphOutput("dygraph")
+    ),
+    br(),
+    fluidRow(
+      plotOutput("timetakenHist")
     )
   )
 )
 
-server <- function(input, output, session) {
-  dataInput <- reactive({
-    cat("Reading file...")
-    
-    # if (is.null(input$file))
-    #   return(NULL)
-    # iis <- read_delim(input$file$datapath, " ",
-    iis <- read_delim("../iislogging_data/iis.log", " ",
-                      escape_double = FALSE, col_names = FALSE, trim_ws = TRUE,
-                      col_types = paste0(rep("c", 15), collapse = ""),
-                      na = "-", comment = "#")
-
-    colnames(iis) <- c("date",
-                       "time",
-                       "sip",
-                       "csmethod",
-                       "csuristem",
-                       "csuriquery",
-                       "sport",
-                       "csusername",
-                       "cip",
-                       "csUserAgent",
-                       "csReferer",
-                       "scstatus",
-                       "scsubstatus",
-                       "scwin32status",
-                       "timetaken")
-
-    iis$time <- as.POSIXct(paste(iis$date, iis$time))
-
-    iis$reqtype <- ""
-    iis$reqtype[iis$csmethod == "GET" & !is.na(iis$csuriquery)] <- "SEARCH"
-    iis$reqtype[iis$csmethod == "GET" & is.na(iis$csuriquery)] <- "GET"
-    iis$reqtype[iis$csmethod == "PUT"] <- "PUT"
-    iis$reqtype[iis$csmethod == "POST"] <- "POST"
-    iis$reqtype[iis$csmethod == "DELETE"] <- "DELETE"
-
-    colnames(iis)[2] <- "timestamp"
-    iis$timetaken <- as.numeric(iis$timetaken)
-
-    cat("done.\n")
-
-    return(iis)
-  })
-
+server <- function(input, output) {
+  rv <- reactiveValues()
+  
   observeEvent(input$file, {
-    dataInput()
+    if (isolate(input$source == "iis")) {
+      cat("Reading IIS file\n")
+
+      columnnames <- "date time s-ip cs-method cs-uri-stem cs-uri-query s-port cs-username c-ip cs(User-Agent) cs(Referer) sc-status sc-substatus sc-win32-status time-taken"
+      columnnames <- gsub("[-()]", "", columnnames)
+      columnnames <- unlist(strsplit(columnnames, " "))
+      n_columns <- length(columnnames)
+      
+#      f.tmp <- read_delim("../iislogging_data/u_ex180117.log", " ",
+      f.tmp <- read_delim(input$file$datapath, " ",
+                          escape_double = FALSE, col_names = FALSE, trim_ws = TRUE,
+                          col_types = paste0(rep("c", n_columns), collapse = ""),
+                          na = "-", comment = "#")
+      
+      colnames(f.tmp) <- columnnames
+      
+      iis <- f.tmp
+      
+      iis$timestamp <- as.POSIXct(paste(iis$date, iis$time), tz = "UTC") %>%
+        format(tz = "CET", usetz = TRUE)
+      
+      iis$reqtype <- ""
+      iis$reqtype[iis$csmethod == "GET" & !is.na(iis$csuriquery)] <- "SEARCH"
+      iis$reqtype[iis$csmethod == "GET" & is.na(iis$csuriquery)] <- "GET"
+      iis$reqtype[iis$csmethod == "HEAD"] <- "HEAD"
+      iis$reqtype[iis$csmethod == "PUT"] <- "PUT"
+      iis$reqtype[iis$csmethod == "POST"] <- "POST"
+      iis$reqtype[iis$csmethod == "DELETE"] <- "DELETE"
+      
+      iis$timetaken <- as.numeric(iis$timetaken)
+      
+      iis <- iis[, c("timestamp", "csmethod", "timetaken")]
+      
+      iis_xts <- xts(iis[, 3], order.by = as.POSIXct(iis$timestamp))
+      colnames(iis_xts) <- "iis"
+      
+      rv$iis <- iis_xts
+    } else if (isolate(input$source == "cdh")) {
+      cat("Reading CDH file\n")
+      
+      # f.tmp <- read_lines("../iislogging_data/server-2018-01-24.log")
+      f.tmp <- read_lines(input$file$datapath)
+      l.tmp <- lapply(f.tmp, function(x) substring(x, 
+                                                   c(1, 6, 30, 37, 46), 
+                                                   c(4, 28, 35, 45, 150)))
+      cdh <- as.tbl(as.data.frame(matrix(unlist(l.tmp), ncol = 5, byrow = TRUE),
+                                  stringsAsFactors = FALSE))
+      colnames(cdh) <- c("session", "timestamp", "thread", "severity", "message")
+      
+      cleans <- grepl("No changes detected:|Record saved:", cdh$message)
+      cdh <- cdh[cleans, ]
+      cdh$csmethod <- "PUT"
+      
+      cdh$timestamp <- gsub(",", ".", cdh$timestamp)
+      cdh$timestamp <- as.POSIXct(strptime(cdh$timestamp,
+                                           format = "%Y-%m-%d %H:%M:%OS"), 
+                                  tz = "CET") %>%
+        format(tz = "CET", usetz = TRUE)
+      
+      cdh$timetaken <- str_extract(cdh$message, "\\[\\d*ms\\]$") %>%
+        gsub(pattern = "[\\[\\]ms]", replacement = "", perl = TRUE) %>%
+        as.numeric()
+      
+      cdh <- cdh[, c("timestamp", "csmethod", "timetaken")]
+      
+      cdh_xts <- xts(cdh[, 3], order.by = as.POSIXct(cdh$timestamp))
+      colnames(cdh_xts) <- "cdh"
+      
+      rv$cdh <- cdh_xts      
+    }
   })
   
-  datasetUpdate <- eventReactive(input$gobutton, {
-    iis <- dataInput()
-    if (is.null(iis))
-      return(NULL)
-    else {
-      basedate <- as.POSIXct(as.character(iis[1, "date"]), format = "%Y-%m-%d")
+  output$dygraph <- renderDygraph({
+    if (!is.null(rv$iis) | !is.null(rv$cdh)) {
+      if (is.null(rv$iis))
+        logdata <- rv$cdh
+      else if (is.null(rv$cdh))
+        logdata <- rv$iis
+      else
+        logdata <- cbind(rv$iis, rv$cdh)
+    
+      dy <- dygraph(data = logdata, main = "Request times taken") %>% 
+        dyHighlight(highlightCircleSize = 5,
+                    highlightSeriesBackgroundAlpha = 0.2,
+                    hideOnMouseOut = FALSE, 
+                    highlightSeriesOpts = list(strokeWidth = 3)) %>%
+        dyRangeSelector()
       
-      min_ts <- iis[[1, "timestamp"]]
-      max_ts <- iis[[nrow(iis), "timestamp"]]
-
-      from = as.POSIXct(paste(basedate, format(input$from, "%T")))
-      if (from == basedate)
-        from = min_ts
-      to = as.POSIXct(paste(basedate, format(input$to, "%T")))
-      if (to == basedate)
-        to = max_ts
-
-      selectedtimes <- iis[iis$timestamp >= from & iis$timestamp <= to, ]
-      print(paste("from:", from, "to:", to))
-      
-      return(selectedtimes)
+      return(dy)
     }
   })
 
-  output$start <- renderValueBox({
-    x <- datasetUpdate()
-    if (is.null(x) || nrow(x) == 0)
-      v = 0
-    else
-      v = as.character(min(x$timestamp), format = "%H:%M:%S")
-    
+  output$reqstart <- renderValueBox({
+    req(input$dygraph_date_window[[1]])
+    v <- format(ymd_hms(input$dygraph_date_window[[1]], tz = "CET"), 
+                format = "%X")
+
     valueBox(
       value = v,
       subtitle = "Start time",
@@ -180,13 +169,11 @@ server <- function(input, output, session) {
       icon = icon("log-out", lib = "glyphicon")
     )
   })
-
-  output$end <- renderValueBox({
-    x <- datasetUpdate()
-    if (is.null(x) || nrow(x) == 0)
-      v = 0
-    else
-      v = as.character(max(x$timestamp), format = "%H:%M:%S")
+  
+  output$reqend <- renderValueBox({
+    req(input$dygraph_date_window[[2]])
+    v <- format(ymd_hms(input$dygraph_date_window[[2]], tz = "CET"), 
+                format = "%X")
 
     valueBox(
       value = v,
@@ -195,14 +182,24 @@ server <- function(input, output, session) {
       icon = icon("log-in", lib = "glyphicon")
     )
   })
+  
+  output$min_cdh <- renderValueBox({
+    req(input$dygraph_date_window[[1]])
+    req(input$dygraph_date_window[[2]])
+    req(rv)
 
-  output$min <- renderValueBox({
-    x <- datasetUpdate()
-    if (is.null(x) || nrow(x) == 0)
+    df <- as.data.frame(rv$cdh)
+    
+    if (is.null(df) || nrow(df) == 0)
       v = 0
-    else
-      v = as.character(min(x$timetaken))
-
+    else {
+      from <- ymd_hms(input$dygraph_date_window[[1]])
+      to <- ymd_hms(input$dygraph_date_window[[2]])
+      df$timestamp <- as.POSIXct(rownames(df))
+      df <- df[(df$timestamp >= from) & (df$timestamp <= to), ]
+      v = as.character(min(df$cdh))
+    }
+    
     valueBox(
       value = v,
       subtitle = "Minimum time",
@@ -210,14 +207,23 @@ server <- function(input, output, session) {
       icon = icon("time", lib = "glyphicon")
     )
   })
-
-  output$max <- renderValueBox({
-    x <- datasetUpdate()
-    if (is.null(x) || nrow(x) == 0)
+  
+  output$max_cdh <- renderValueBox({
+    req(input$dygraph_date_window[[1]])
+    req(input$dygraph_date_window[[2]])
+    req(rv)
+    
+    df <- as.data.frame(rv$cdh)
+    if (is.null(df) || nrow(df) == 0)
       v = 0
-    else
-      v = as.character(max(x$timetaken))
-
+    else {
+      from <- ymd_hms(input$dygraph_date_window[[1]])
+      to <- ymd_hms(input$dygraph_date_window[[2]])
+      df$timestamp <- as.POSIXct(rownames(df))
+      df <- df[(df$timestamp >= from) & (df$timestamp <= to), ]
+      v = as.character(max(df$cdh))
+    }
+    
     valueBox(
       value = v,
       subtitle = "Maximum time",
@@ -226,13 +232,22 @@ server <- function(input, output, session) {
     )
   })
 
-  output$mean <- renderValueBox({
-    x <- datasetUpdate()
-    if (is.null(x) || nrow(x) == 0)
+  output$mean_cdh <- renderValueBox({
+    req(input$dygraph_date_window[[1]])
+    req(input$dygraph_date_window[[2]])
+    req(rv)
+    
+    df <- as.data.frame(rv$cdh)
+    if (is.null(df) || nrow(df) == 0)
       v = 0
-    else
-      v = as.character(round(mean(x$timetaken), 1))
-
+    else {
+      from <- ymd_hms(input$dygraph_date_window[[1]])
+      to <- ymd_hms(input$dygraph_date_window[[2]])
+      df$timestamp <- as.POSIXct(rownames(df))
+      df <- df[(df$timestamp >= from) & (df$timestamp <= to), ]
+      v = as.character(round(mean(df$cdh), 1))
+    }
+    
     valueBox(
       value = v,
       subtitle = "Mean time",
@@ -241,13 +256,22 @@ server <- function(input, output, session) {
     )
   })
 
-  output$requests <- renderValueBox({
-    x <- datasetUpdate()
-    if (is.null(x) || nrow(x) == 0)
+  output$requests_cdh <- renderValueBox({
+    req(input$dygraph_date_window[[1]])
+    req(input$dygraph_date_window[[2]])
+    req(rv)
+    
+    df <- as.data.frame(rv$cdh)
+    if (is.null(df) || nrow(df) == 0)
       v = 0
-    else
-      v = as.character(nrow(x))
-
+    else {
+      from <- ymd_hms(input$dygraph_date_window[[1]])
+      to <- ymd_hms(input$dygraph_date_window[[2]])
+      df$timestamp <- as.POSIXct(rownames(df))
+      df <- df[(df$timestamp >= from) & (df$timestamp <= to), ]
+      v = as.character(nrow(df))
+    }
+    
     valueBox(
       value = v,
       subtitle = "Number of requests",
@@ -255,11 +279,19 @@ server <- function(input, output, session) {
       icon = icon("road", lib = "glyphicon")
     )
   })
-
+  
   output$timetakenHist <- renderPlot({
-    x <- datasetUpdate()
-    if (!is.null(x)) {
-      p <- ggplot(x, aes(x = timetaken, fill = "#75AADB")) +
+    req(input$dygraph_date_window[[1]])
+    req(input$dygraph_date_window[[2]])
+    req(rv)
+    
+    df <- as.data.frame(rv$cdh)
+    if (nrow(df) > 0) {
+      from <- ymd_hms(input$dygraph_date_window[[1]])
+      to <- ymd_hms(input$dygraph_date_window[[2]])
+      df$timestamp <- as.POSIXct(rownames(df))
+      df <- df[(df$timestamp >= from) & (df$timestamp <= to), ]
+      p <- ggplot(df, aes(x = cdh, fill = "#75AADB")) +
         ggtitle("Distribution of time-taken") + 
         xlab("time-taken interval [secs]") +
         ylab("Number of requests per interval") +
@@ -267,66 +299,6 @@ server <- function(input, output, session) {
       p
     }
   })
-
-  output$reqtypePlot <- renderPlot({
-    x <- datasetUpdate()
-    if (!is.null(x)) {
-      df <- as.data.frame(table(x$reqtype))
-      colnames(df) <- c("Request type", "Frequency")
-      p <- ggplot(df, aes(x = `Request type`, 
-                          y = Frequency, 
-                          fill = `Request type`)) +
-        geom_bar(stat = "identity") +
-        ggtitle("Number of requests per type") +
-        xlab("Request type") +
-        ylab("Number of requests per type")
-      p
-    }
-  })
-  
-  output$reqperfPlot <- renderPlot({
-    x <- datasetUpdate()
-    if (!is.null(x)) {
-      reqperf <- x %>%
-        mutate(window = cut(timestamp, "min")) %>%
-        group_by(window) %>%
-        summarise(requests = n())
-
-      reqperf$window <- as.POSIXct(reqperf$window)
-      
-      p <- ggplot(reqperf, aes(x = reqperf$window, y = reqperf$requests)) +
-        geom_line() +
-        scale_x_datetime() +
-        ggtitle("Requests per minute") +
-        xlab("Time") + 
-        ylab("Number of requests")
-      p
-    }
-  })
-  
-  output$dygraph <- renderDygraph({
-    x <- datasetUpdate()
-    if (!is.null(x)) {
-      reqperf <- x %>%
-        mutate(window = cut(timestamp, "min")) %>%
-        group_by(window) %>%
-        summarise(requests = n())
-      
-      # reqperf$window <- as.POSIXct(reqperf$window)
-
-      reqperf_n <- zoo(reqperf)
-      print(reqperf)
-      output$dygraph <- renderDygraph(
-        dygraph(data = reqperf, main = "Requests per minute") %>% 
-          dyHighlight(highlightCircleSize = 5,
-                      highlightSeriesBackgroundAlpha = 0.2,
-                      hideOnMouseOut = FALSE, highlightSeriesOpts = list(strokeWidth = 3)) %>%
-          dyRangeSelector()
-      )      
-      
-    }
-  })
 }
 
-# Run the application
 shinyApp(ui = ui, server = server)
