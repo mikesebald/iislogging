@@ -6,6 +6,7 @@ library(stringr)
 library(dygraphs)
 library(xts)
 library(ggplot2)
+library(data.table)
 
 options(shiny.maxRequestSize=100*1024^2)
 
@@ -65,6 +66,8 @@ server <- function(input, output) {
   rv <- reactiveValues()
   
   observeEvent(input$file, {
+    cat(paste(Sys.time(), "in observeEvent\n"))
+    
     if (isolate(input$source == "iis")) {
       cat("Reading IIS file\n")
 
@@ -101,51 +104,54 @@ server <- function(input, output) {
       iis_xts <- xts(iis[, 3], order.by = as.POSIXct(iis$timestamp))
       colnames(iis_xts) <- "iis"
       
-      rv$iis <- iis_xts
+      rv$iis_xts <- iis_xts
+      rv$iis <- iis
     } else if (isolate(input$source == "cdh")) {
       cat("Reading CDH file\n")
       
-      # f.tmp <- read_lines("../iislogging_data/server-2018-01-24.log")
+      # f.tmp <- read_lines("../iislogging_data/combined_sasv.log")
       f.tmp <- read_lines(input$file$datapath)
       l.tmp <- lapply(f.tmp, function(x) substring(x, 
                                                    c(1, 6, 30, 37, 46), 
                                                    c(4, 28, 35, 45, 150)))
       cdh <- as.tbl(as.data.frame(matrix(unlist(l.tmp), ncol = 5, byrow = TRUE),
                                   stringsAsFactors = FALSE))
-      colnames(cdh) <- c("session", "timestamp", "thread", "severity", "message")
+      cdh <- cdh[, c(2,5)]
+      colnames(cdh) <- c("timestamp", "message")
       
       cleans <- grepl("No changes detected:|Record saved:", cdh$message)
       cdh <- cdh[cleans, ]
-      cdh$csmethod <- "PUT"
-      
+
       cdh$timestamp <- gsub(",", ".", cdh$timestamp)
-      cdh$timestamp <- as.POSIXct(strptime(cdh$timestamp,
-                                           format = "%Y-%m-%d %H:%M:%OS"), 
-                                  tz = "CET") %>%
-        format(tz = "CET", usetz = TRUE)
-      
+      cdh$timestamp <- fast_strptime(cdh$timestamp,
+                                     format = "%Y-%m-%d %H:%M:%OS",
+                                     tz = "CET")
+
       cdh$timetaken <- str_extract(cdh$message, "\\[\\d*ms\\]$") %>%
         gsub(pattern = "[\\[\\]ms]", replacement = "", perl = TRUE) %>%
         as.numeric()
       
-      cdh <- cdh[, c("timestamp", "csmethod", "timetaken")]
-      
-      cdh_xts <- xts(cdh[, 3], order.by = as.POSIXct(cdh$timestamp))
+      cdh_xts <- xts(cdh$timetaken, order.by = cdh$timestamp)
       colnames(cdh_xts) <- "cdh"
       
-      rv$cdh <- cdh_xts      
+      # logdata <- cdh_xts
+      
+      rv$cdh_xts <- cdh_xts
+      rv$cdh <- cdh
+      cat(paste(Sys.time(), "out observeEvent\n"))
     }
   })
   
   output$dygraph <- renderDygraph({
-    if (!is.null(rv$iis) | !is.null(rv$cdh)) {
-      if (is.null(rv$iis))
-        logdata <- rv$cdh
-      else if (is.null(rv$cdh))
-        logdata <- rv$iis
+    cat(paste(Sys.time(), "in dygraph\n"))
+    if (!is.null(rv$iis_xts) | !is.null(rv$cdh_xts)) {
+      if (is.null(rv$iis_xts))
+        logdata <- rv$cdh_xts
+      else if (is.null(rv$cdh_xts))
+        logdata <- rv$iis_xts
       else
-        logdata <- cbind(rv$iis, rv$cdh)
-    
+        logdata <- cbind(rv$iis_xts, rv$cdh_xts)
+      
       dy <- dygraph(data = logdata, main = "Request times taken") %>% 
         dyHighlight(highlightCircleSize = 5,
                     highlightSeriesBackgroundAlpha = 0.2,
@@ -153,15 +159,19 @@ server <- function(input, output) {
                     highlightSeriesOpts = list(strokeWidth = 3)) %>%
         dyRangeSelector()
       
+      cat(paste(Sys.time(), "out dygraph\n"))
       return(dy)
     }
   })
 
   output$reqstart <- renderValueBox({
+    cat(paste(Sys.time(), "in reqstart\n"))
+    
     req(input$dygraph_date_window[[1]])
     v <- format(ymd_hms(input$dygraph_date_window[[1]], tz = "CET"), 
                 format = "%X")
 
+    cat(paste(Sys.time(), "out reqstart\n"))
     valueBox(
       value = v,
       subtitle = "Start time",
@@ -171,10 +181,13 @@ server <- function(input, output) {
   })
   
   output$reqend <- renderValueBox({
+    cat(paste(Sys.time(), "in reqend\n"))
+    
     req(input$dygraph_date_window[[2]])
     v <- format(ymd_hms(input$dygraph_date_window[[2]], tz = "CET"), 
                 format = "%X")
 
+    cat(paste(Sys.time(), "out reqend\n"))
     valueBox(
       value = v,
       subtitle = "End time",
@@ -184,21 +197,23 @@ server <- function(input, output) {
   })
   
   output$min_cdh <- renderValueBox({
+    cat(paste(Sys.time(), "in min\n"))
+    
     req(input$dygraph_date_window[[1]])
     req(input$dygraph_date_window[[2]])
     req(rv)
 
-    df <- as.data.frame(rv$cdh)
+    df <- rv$cdh
     
     if (is.null(df) || nrow(df) == 0)
       v = 0
     else {
       from <- ymd_hms(input$dygraph_date_window[[1]])
       to <- ymd_hms(input$dygraph_date_window[[2]])
-      df$timestamp <- as.POSIXct(rownames(df))
       df <- df[(df$timestamp >= from) & (df$timestamp <= to), ]
-      v = as.character(min(df$cdh))
+      v = as.character(min(df$timetaken))
     }
+    cat(paste(Sys.time(), "out min\n"))
     
     valueBox(
       value = v,
@@ -209,20 +224,23 @@ server <- function(input, output) {
   })
   
   output$max_cdh <- renderValueBox({
+    cat(paste(Sys.time(), "in max\n"))
+
     req(input$dygraph_date_window[[1]])
     req(input$dygraph_date_window[[2]])
     req(rv)
     
-    df <- as.data.frame(rv$cdh)
+    df <- rv$cdh
     if (is.null(df) || nrow(df) == 0)
       v = 0
     else {
       from <- ymd_hms(input$dygraph_date_window[[1]])
       to <- ymd_hms(input$dygraph_date_window[[2]])
-      df$timestamp <- as.POSIXct(rownames(df))
       df <- df[(df$timestamp >= from) & (df$timestamp <= to), ]
-      v = as.character(max(df$cdh))
+      v = as.character(max(df$timetaken))
     }
+    
+    cat(paste(Sys.time(), "out max\n"))
     
     valueBox(
       value = v,
@@ -233,20 +251,23 @@ server <- function(input, output) {
   })
 
   output$mean_cdh <- renderValueBox({
+    cat(paste(Sys.time(), "in mean\n"))
+    
     req(input$dygraph_date_window[[1]])
     req(input$dygraph_date_window[[2]])
     req(rv)
     
-    df <- as.data.frame(rv$cdh)
+    df <- rv$cdh
     if (is.null(df) || nrow(df) == 0)
       v = 0
     else {
       from <- ymd_hms(input$dygraph_date_window[[1]])
       to <- ymd_hms(input$dygraph_date_window[[2]])
-      df$timestamp <- as.POSIXct(rownames(df))
       df <- df[(df$timestamp >= from) & (df$timestamp <= to), ]
-      v = as.character(round(mean(df$cdh), 1))
+      v = as.character(round(mean(df$timetaken), 1))
     }
+
+    cat(paste(Sys.time(), "out mean\n"))
     
     valueBox(
       value = v,
@@ -257,20 +278,22 @@ server <- function(input, output) {
   })
 
   output$requests_cdh <- renderValueBox({
+    cat(paste(Sys.time(), "in reqs\n"))
+    
     req(input$dygraph_date_window[[1]])
     req(input$dygraph_date_window[[2]])
     req(rv)
     
-    df <- as.data.frame(rv$cdh)
+    df <- rv$cdh
     if (is.null(df) || nrow(df) == 0)
       v = 0
     else {
       from <- ymd_hms(input$dygraph_date_window[[1]])
       to <- ymd_hms(input$dygraph_date_window[[2]])
-      df$timestamp <- as.POSIXct(rownames(df))
       df <- df[(df$timestamp >= from) & (df$timestamp <= to), ]
       v = as.character(nrow(df))
     }
+    cat(paste(Sys.time(), "out reqs\n"))
     
     valueBox(
       value = v,
@@ -281,21 +304,24 @@ server <- function(input, output) {
   })
   
   output$timetakenHist <- renderPlot({
+    cat(paste(Sys.time(), "in hist\n"))
+    
     req(input$dygraph_date_window[[1]])
     req(input$dygraph_date_window[[2]])
     req(rv)
     
-    df <- as.data.frame(rv$cdh)
+    df <- rv$cdh
     if (nrow(df) > 0) {
       from <- ymd_hms(input$dygraph_date_window[[1]])
       to <- ymd_hms(input$dygraph_date_window[[2]])
-      df$timestamp <- as.POSIXct(rownames(df))
       df <- df[(df$timestamp >= from) & (df$timestamp <= to), ]
-      p <- ggplot(df, aes(x = cdh, fill = "#75AADB")) +
+      p <- ggplot(df, aes(x = timetaken, fill = "#75AADB")) +
         ggtitle("Distribution of time-taken") + 
         xlab("time-taken interval [secs]") +
         ylab("Number of requests per interval") +
         geom_histogram()
+      cat(paste(Sys.time(), "out hist\n"))
+      
       p
     }
   })
