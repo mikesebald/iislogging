@@ -66,8 +66,8 @@ server <- function(input, output) {
       columnnames <- unlist(strsplit(columnnames, " "))
       n_columns <- length(columnnames)
       
-#      f.tmp <- read_delim("../iislogging_data/u_ex180117.log", " ",
-      f.tmp <- read_delim(input$file$datapath, " ",
+      f.tmp <- read_delim("../iislogging_data/u_ex180117.log", " ",
+      # f.tmp <- read_delim(input$file$datapath, " ",
                           escape_double = FALSE, col_names = FALSE, trim_ws = TRUE,
                           col_types = paste0(rep("c", n_columns), collapse = ""),
                           na = "-", comment = "#")
@@ -99,20 +99,21 @@ server <- function(input, output) {
     } else if (isolate(input$source == "cdh")) {
       cat("Reading CDH file\n")
       
-      # f.tmp <- read_lines("../iislogging_data/combined_sasv.log")
+      # f.tmp <- read_lines("../iislogging_data/server-2018-02-16.log")
       f.tmp <- read_lines(input$file$datapath)
-      l.tmp <- lapply(f.tmp, function(x) substring(x, 
-                                                   c(1, 6, 30, 37, 46), 
-                                                   c(4, 28, 35, 45, 150)))
-      cdh <- as.data.table(matrix(unlist(l.tmp), 
-                                  ncol = 5, 
-                                  byrow = TRUE))
-      cdh <- cdh[, .(V2,V5)]
-      colnames(cdh) <- c("timestamp", "message")
       
-      cleans <- grepl("No changes detected:|Record saved:", cdh$message)
-      cdh <- cdh[cleans, ]
-
+      # subsetting on rows only which have a time-taken timestamp
+      cleans <- grepl("No changes detected:|Record saved:", f.tmp)
+      clean_rows <- f.tmp[cleans]
+      
+      # extracting the timestamp and the time-taken 
+      timestamp <- str_extract(clean_rows, "\\d{4}-\\d{2}-\\d{2}\\s\\d{2}:\\d{2}:\\d{2},\\d{3}")
+      timetaken <- str_extract(clean_rows, "\\[\\d+ms\\]$") %>%
+        str_extract("\\d+")
+      timetaken[is.na(timetaken)] <- "0"
+      
+      cdh <- as.data.table(cbind(timestamp, timetaken))
+      cdh[, timetaken := as.numeric(timetaken)]
       cdh[, timestamp := gsub(",", ".", cdh[, timestamp])]
 
       # using lubridate::fast_strptime would be much quicker, but using
@@ -120,10 +121,6 @@ server <- function(input, output) {
       cdh[, ts := as.POSIXct(strptime(cdh[, timestamp],
                                       format = "%Y-%m-%d %H:%M:%OS",
                                       tz = "CET"))]
-      
-      cdh[, timetaken := str_extract(cdh[, message], "\\[\\d*ms\\]$") %>%
-        gsub(pattern = "[\\[\\]ms]", replacement = "", perl = TRUE) %>%
-        as.numeric()]
       
       cdh_xts <- xts(cdh[, timetaken], order.by = cdh[, ts])
       colnames(cdh_xts) <- "cdh"
