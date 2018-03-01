@@ -7,17 +7,43 @@ output: html_document
 
 ```{r setup, echo = FALSE}
 knitr::opts_chunk$set(echo = TRUE)
-```
 
-## Einlesen der Datei
-Lesen des zusammengesetzten CDH Admin-Logfiles.
-```{r, echo = FALSE}
 library(readr)
 library(stringr)
 library(ggplot2)
 library(dygraphs)
 library(knitr)
+library(plyr)
+library(tidyr)
+```
 
+```{r, include = FALSE}
+prepForPlot <- function(batch_lines){
+  timestamp <- str_extract(batch_lines, "\\d{4}-\\d{2}-\\d{2}\\s\\d{2}:\\d{2}:\\d{2},\\d{3}")
+  timestamp <- str_replace(timestamp, ",", ".")
+  timeshift <- timestamp[c(1, 1:(length(timestamp) - 1))] %>%
+    as.POSIXct(format = "%Y-%m-%d %H:%M:%OS")
+  timestamp <- as.POSIXct(timestamp, format = "%Y-%m-%d %H:%M:%OS")
+  timediff <- difftime(timestamp, timeshift)
+  
+  timediff[timediff == 0] = NA
+  
+  td_min <- min(timediff, na.rm = TRUE)
+  td_max <- max(timediff, na.rm = TRUE)
+  td_mean <- mean(timediff, na.rm = TRUE)
+  
+  result_list <- list("timediff" = timediff,
+                      "td_min" = td_min,
+                      "td_max" = td_max,
+                      "td_mean" = td_mean)
+
+  return(result_list)
+}
+```
+
+## Einlesen der Datei
+Lesen des zusammengesetzten CDH Admin-Logfiles.
+```{r, echo = FALSE}
 f.tmp <- read_lines("e:/temp/admin.log")
 start_load_init <- grepl("START LoadInit", f.tmp)
 batch_start <- max(which(start_load_init))
@@ -30,39 +56,23 @@ batch_lines[grepl(" START| END", batch_lines)]
 ```
 
 ## Load Validate Schritt
-```{r, echo=FALSE}
+```{r, echo = FALSE}
 lv <- grepl("LoadValidate: Progress:", batch_lines)
-lv_rows <- batch_lines[lv]
+bl_rows <- batch_lines[lv]
 
-# extracting the timestamp and the time-taken 
-timestamp <- str_extract(lv_rows, "\\d{4}-\\d{2}-\\d{2}\\s\\d{2}:\\d{2}:\\d{2},\\d{3}")
-timestamp <- str_replace(timestamp, ",", ".")
-timeshift <- timestamp[c(1, 1:(length(timestamp) - 1))]
-
-records <- str_extract(lv_rows, "\\d+$") %>%
+records <- str_extract(bl_rows, "\\d+$") %>%
   str_extract("\\d+")
 records <- as.numeric(records)
 
-# View(cbind(timestamp, timeshift, records))
-
-timestamp <- as.POSIXct(timestamp, format = "%Y-%m-%d %H:%M:%OS")
-timeshift <- as.POSIXct(timeshift, format = "%Y-%m-%d %H:%M:%OS")
-timediff <- difftime(timestamp, timeshift)
-
-timediff[timediff == 0] = NA
-
-df <- as.data.frame(cbind(records, timediff))
-
-td_min <- min(timediff, na.rm = TRUE)
-td_max <- max(timediff, na.rm = TRUE)
-td_mean <- mean(timediff, na.rm = TRUE)
+res <- prepForPlot(bl_rows)
+df <- as.data.frame(cbind(records, "timediff" = res$timediff))
 
 p <- ggplot(df, aes(x = records, y = timediff)) +
   geom_line(size = 1, colour = "blue") +
   scale_x_continuous(labels = function(x) format(x, big.mark = ".", decimal.mark = ",", scientific = FALSE)) +
-  geom_hline(yintercept = td_max, size = 1, colour = "red") +
-  geom_hline(yintercept = td_mean, size = 1, colour = "green") +
-  geom_hline(yintercept = td_min, size = 1, colour = "pink") +
+  geom_hline(yintercept = res$td_max, size = 1, colour = "red") +
+  geom_hline(yintercept = res$td_mean, size = 1, colour = "green") +
+  geom_hline(yintercept = res$td_min, size = 1, colour = "pink") +
   ggtitle("Load Validate - Zeit je 5k Records") + 
   xlab("Records") +
   ylab("Zeit [sec]") +
@@ -70,44 +80,28 @@ p <- ggplot(df, aes(x = records, y = timediff)) +
 ```
 
 ```{r, echo = FALSE}
-kable(data.frame(Minimum = td_min, Maximum = td_max, Durchschnitt = td_mean))
+kable(data.frame(Minimum = res$td_min, Maximum = res$td_max, Durchschnitt = res$td_mean))
 p
 ```
 
 ## Load Export Descriptors Schritt
 ```{r, echo = FALSE}
 led <- grepl("LoadExportDescriptors: \\(", batch_lines)
-led_rows <- batch_lines[led]
+bl_rows <- batch_lines[led]
 
-# extracting the timestamp and the time-taken 
-timestamp <- str_extract(led_rows, "\\d{4}-\\d{2}-\\d{2}\\s\\d{2}:\\d{2}:\\d{2},\\d{3}")
-timestamp <- str_replace(timestamp, ",", ".")
-timeshift <- timestamp[c(1, 1:(length(timestamp) - 1))]
-
-records <- str_extract(led_rows, "Progress: \\d+ of") %>%
+records <- str_extract(bl_rows, "Progress: \\d+ of") %>%
   str_extract("\\d+")
 records <- as.numeric(records)
 
-# View(cbind(timestamp, timeshift, records))
-
-timestamp <- as.POSIXct(timestamp, format = "%Y-%m-%d %H:%M:%OS")
-timeshift <- as.POSIXct(timeshift, format = "%Y-%m-%d %H:%M:%OS")
-timediff <- difftime(timestamp, timeshift)
-
-timediff[timediff == 0] = NA
-
-df <- as.data.frame(cbind(records, timediff))
-
-td_min <- min(timediff, na.rm = TRUE)
-td_max <- max(timediff, na.rm = TRUE)
-td_mean <- mean(timediff, na.rm = TRUE)
+res <- prepForPlot(bl_rows)
+df <- as.data.frame(cbind(records, "timediff" = res$timediff))
 
 p <- ggplot(df, aes(x = records, y = timediff)) +
   geom_point(size = 1, colour = "blue") +
   scale_x_continuous(labels = function(x) format(x, big.mark = ".", decimal.mark = ",", scientific = FALSE)) +
-  geom_hline(yintercept = td_max, size = 1, colour = "red") +
-  geom_hline(yintercept = td_mean, size = 1, colour = "green") +
-  geom_hline(yintercept = td_min, size = 1, colour = "pink") +
+  geom_hline(yintercept = res$td_max, size = 1, colour = "red") +
+  geom_hline(yintercept = res$td_mean, size = 1, colour = "green") +
+  geom_hline(yintercept = res$td_min, size = 1, colour = "pink") +
   ggtitle("Load Export Descriptors - Zeit je 5k Records") + 
   xlab("Records") +
   ylab("Zeit [sec]") +
@@ -115,44 +109,29 @@ p <- ggplot(df, aes(x = records, y = timediff)) +
 ```
 
 ```{r, echo = FALSE}
-kable(data.frame(Minimum = td_min, Maximum = td_max, Durchschnitt = td_mean))
+kable(data.frame(Minimum = res$td_min, Maximum = res$td_max, Durchschnitt = res$td_mean))
 p
 ```
 
 ## Load Dedup Schritt
+Noch fehlend: DQBT-Schritte: Imported/Started/Finished
 ```{r, echo = FALSE}
 ld <- grepl("LoadDedup: \\(", batch_lines)
-ld_rows <- batch_lines[ld]
+bl_rows <- batch_lines[ld]
 
-# extracting the timestamp and the time-taken 
-timestamp <- str_extract(ld_rows, "\\d{4}-\\d{2}-\\d{2}\\s\\d{2}:\\d{2}:\\d{2},\\d{3}")
-timestamp <- str_replace(timestamp, ",", ".")
-timeshift <- timestamp[c(1, 1:(length(timestamp) - 1))]
-
-records <- str_extract(ld_rows, "Progress: \\d+ of") %>%
+records <- str_extract(bl_rows, "Progress: \\d+ of") %>%
   str_extract("\\d+")
 records <- as.numeric(records)
 
-# View(cbind(timestamp, timeshift, records))
-
-timestamp <- as.POSIXct(timestamp, format = "%Y-%m-%d %H:%M:%OS")
-timeshift <- as.POSIXct(timeshift, format = "%Y-%m-%d %H:%M:%OS")
-timediff <- difftime(timestamp, timeshift)
-
-timediff[timediff == 0] = NA
-
-df <- as.data.frame(cbind(records, timediff))
-
-td_min <- min(timediff, na.rm = TRUE)
-td_max <- max(timediff, na.rm = TRUE)
-td_mean <- mean(timediff, na.rm = TRUE)
+res <- prepForPlot(bl_rows)
+df <- as.data.frame(cbind(records, "timediff" = res$timediff))
 
 p <- ggplot(df, aes(x = records, y = timediff)) +
   geom_point(size = 1, colour = "blue") +
   scale_x_continuous(labels = function(x) format(x, big.mark = ".", decimal.mark = ",", scientific = FALSE)) +
-  geom_hline(yintercept = td_max, size = 1, colour = "red") +
-  geom_hline(yintercept = td_mean, size = 1, colour = "green") +
-  geom_hline(yintercept = td_min, size = 1, colour = "pink") +
+  geom_hline(yintercept = res$td_max, size = 1, colour = "red") +
+  geom_hline(yintercept = res$td_mean, size = 1, colour = "green") +
+  geom_hline(yintercept = res$td_min, size = 1, colour = "pink") +
   ggtitle("Load Dedup - Zeit je 10k Records") + 
   xlab("Records") +
   ylab("Zeit [sec]") +
@@ -160,44 +139,28 @@ p <- ggplot(df, aes(x = records, y = timediff)) +
 ```
 
 ```{r, echo = FALSE}
-kable(data.frame(Minimum = td_min, Maximum = td_max, Durchschnitt = td_mean))
+kable(data.frame(Minimum = res$td_min, Maximum = res$td_max, Durchschnitt = res$td_mean))
 p
 ```
 
 ## Load Store Schritt
 ```{r, echo = FALSE}
 ls <- grepl("LoadStore: \\(", batch_lines)
-lrows <- batch_lines[ls]
+bl_rows <- batch_lines[ls]
 
-# extracting the timestamp and the time-taken 
-timestamp <- str_extract(lrows, "\\d{4}-\\d{2}-\\d{2}\\s\\d{2}:\\d{2}:\\d{2},\\d{3}")
-timestamp <- str_replace(timestamp, ",", ".")
-timeshift <- timestamp[c(1, 1:(length(timestamp) - 1))]
-
-records <- str_extract(lrows, "Progress: \\d+ of") %>%
+records <- str_extract(bl_rows, "Progress: \\d+ of") %>%
   str_extract("\\d+")
 records <- as.numeric(records)
 
-# View(cbind(timestamp, timeshift, records))
-
-timestamp <- as.POSIXct(timestamp, format = "%Y-%m-%d %H:%M:%OS")
-timeshift <- as.POSIXct(timeshift, format = "%Y-%m-%d %H:%M:%OS")
-timediff <- difftime(timestamp, timeshift)
-
-timediff[timediff == 0] = NA
-
-df <- as.data.frame(cbind(records, timediff))
-
-td_min <- min(timediff, na.rm = TRUE)
-td_max <- max(timediff, na.rm = TRUE)
-td_mean <- mean(timediff, na.rm = TRUE)
+res <- prepForPlot(bl_rows)
+df <- as.data.frame(cbind(records, "timediff" = res$timediff))
 
 p <- ggplot(df, aes(x = records, y = timediff)) +
   geom_point(size = 1, colour = "blue") +
   scale_x_continuous(labels = function(x) format(x, big.mark = ".", decimal.mark = ",", scientific = FALSE)) +
-  geom_hline(yintercept = td_max, size = 1, colour = "red") +
-  geom_hline(yintercept = td_mean, size = 1, colour = "green") +
-  geom_hline(yintercept = td_min, size = 1, colour = "pink") +
+  geom_hline(yintercept = res$td_max, size = 1, colour = "red") +
+  geom_hline(yintercept = res$td_mean, size = 1, colour = "green") +
+  geom_hline(yintercept = res$td_min, size = 1, colour = "pink") +
   ggtitle("Load Store - Zeit je 1k Records") + 
   xlab("Records") +
   ylab("Zeit [sec]") +
@@ -205,44 +168,67 @@ p <- ggplot(df, aes(x = records, y = timediff)) +
 ```
 
 ```{r, echo = FALSE}
-kable(data.frame(Minimum = td_min, Maximum = td_max, Durchschnitt = td_mean))
+kable(data.frame(Minimum = res$td_min, Maximum = res$td_max, Durchschnitt = res$td_mean))
+p
+```
+
+## Create Match Index Schritt
+```{r, echo = FALSE}
+cmi <- grepl("INFO     Flushed", batch_lines)
+bl_rows <- batch_lines[cmi]
+
+pools <- str_extract(bl_rows, "Flushed .*:") %>%
+  str_extract("\\w*-.*:") %>%
+  str_replace(":", "")
+```
+
+Folgende Pools werden verwendet:
+```{r, echo = FALSE}
+kable(data.frame(Pool = unique(pools)))
+```
+
+```{r, echo = FALSE}
+df <- as.data.frame(cbind(bl_rows, pools))
+by_pool <- split(df, pools)
+
+res_by_pool <- lapply(by_pool, function(x) {prepForPlot(x$bl_rows)})
+
+df <- as.data.frame(t(ldply(lapply(res_by_pool, function(x) {x$timediff}), rbind)))
+colnames(df) <- names(res_by_pool)
+df <- df[-1, ]
+df <- as.data.frame(apply(df, 2, as.numeric))
+df <- cbind(id = c(1:nrow(df)), df)
+df <- gather(df, pool, difftime, -1)
+
+p <- ggplot(df, aes(x = id, y = difftime)) +
+  geom_point(size = 1, colour = "blue") +
+  ggtitle("Load Store - Zeit je 1k Records") + 
+  xlab("Records") +
+  ylab("Zeit [sec]") +
+  theme_minimal() +
+  theme(axis.ticks.x = element_blank(), axis.text.x = element_blank()) +
+  facet_grid(. ~ pool)
 p
 ```
 
 ## Load Possible Matches Schritt
 ```{r, echo = FALSE}
 lpm <- grepl("LoadPossibleMatches: \\(", batch_lines)
-lrows <- batch_lines[lpm]
+bl_rows <- batch_lines[lpm]
 
-# extracting the timestamp and the time-taken 
-timestamp <- str_extract(lrows, "\\d{4}-\\d{2}-\\d{2}\\s\\d{2}:\\d{2}:\\d{2},\\d{3}")
-timestamp <- str_replace(timestamp, ",", ".")
-timeshift <- timestamp[c(1, 1:(length(timestamp) - 1))]
-
-records <- str_extract(lrows, "Progress: \\d+ of") %>%
+records <- str_extract(bl_rows, "Progress: \\d+ of") %>%
   str_extract("\\d+")
 records <- as.numeric(records)
 
-# View(cbind(timestamp, timeshift, records))
-
-timestamp <- as.POSIXct(timestamp, format = "%Y-%m-%d %H:%M:%OS")
-timeshift <- as.POSIXct(timeshift, format = "%Y-%m-%d %H:%M:%OS")
-timediff <- difftime(timestamp, timeshift)
-
-timediff[timediff == 0] = NA
-
-df <- as.data.frame(cbind(records, timediff))
-
-td_min <- min(timediff, na.rm = TRUE)
-td_max <- max(timediff, na.rm = TRUE)
-td_mean <- mean(timediff, na.rm = TRUE)
+res <- prepForPlot(bl_rows)
+df <- as.data.frame(cbind(records, "timediff" = res$timediff))
 
 p <- ggplot(df, aes(x = records, y = timediff)) +
   geom_point(size = 1, colour = "blue") +
   scale_x_continuous(labels = function(x) format(x, big.mark = ".", decimal.mark = ",", scientific = FALSE)) +
-  geom_hline(yintercept = td_max, size = 1, colour = "red") +
-  geom_hline(yintercept = td_mean, size = 1, colour = "green") +
-  geom_hline(yintercept = td_min, size = 1, colour = "pink") +
+  geom_hline(yintercept = res$td_max, size = 1, colour = "red") +
+  geom_hline(yintercept = res$td_mean, size = 1, colour = "green") +
+  geom_hline(yintercept = res$td_min, size = 1, colour = "pink") +
   ggtitle("Load Possible Matches - Zeit je 1k Records") + 
   xlab("Records") +
   ylab("Zeit [sec]") +
@@ -258,7 +244,7 @@ dy <- dygraph(data = df, main = "Load Possible Matches - Zeit je 1k Records") %>
 ```
 
 ```{r, echo = FALSE}
-kable(data.frame(Minimum = td_min, Maximum = td_max, Durchschnitt = td_mean))
+kable(data.frame(Minimum = res$td_min, Maximum = res$td_max, Durchschnitt = res$td_mean))
 p
 dy
 ```
