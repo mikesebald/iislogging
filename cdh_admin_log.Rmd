@@ -170,9 +170,44 @@ if (sum(grepl("END LoadExportDescriptors", start_end_lines)) == 1) {
 ```
 
 ## Load Dedup Schritt
-Noch fehlend: DQBT-Schritte: Imported/Started/Finished
 ```{r, echo = FALSE}
 if (sum(grepl("END LoadDedup", start_end_lines)) == 1) {
+  start_load_dedup <- grep("START LoadDedup", batch_lines)
+  end_load_dedup <- grep("END LoadDedup", batch_lines)
+  load_dedup_lines <- batch_lines[start_load_dedup:end_load_dedup]
+
+  imported_ts <- load_dedup_lines[grepl("Imported", load_dedup_lines)] %>%
+    str_extract("\\d{4}-\\d{2}-\\d{2}\\s\\d{2}:\\d{2}:\\d{2},\\d{3}")
+  imported_job <- load_dedup_lines[grepl("Imported", load_dedup_lines)] %>%
+    str_extract("Imported \\w*") %>%
+    str_extract(" \\w*") %>%
+    str_replace(" ", "")
+
+  finished_ts <- load_dedup_lines[grepl("Finished", load_dedup_lines)] %>%
+    str_extract("\\d{4}-\\d{2}-\\d{2}\\s\\d{2}:\\d{2}:\\d{2},\\d{3}")
+  finished_job <- load_dedup_lines[grepl("Finished", load_dedup_lines)] %>%
+    str_extract("Finished '\\w*") %>%
+    str_extract(" '\\w*") %>%
+    str_replace(" ", "") %>%
+    str_replace("'", "")
+
+  df_imported <- arrange(as.data.frame(cbind(imported_ts, imported_job)), imported_job)
+  df_finished <- arrange(as.data.frame(cbind(finished_ts, finished_job)), finished_job)
+  df <- cbind(df_imported, df_finished)
+  
+  df$timediff <- difftime(as.POSIXct(df_finished$finished_ts, format = "%Y-%m-%d %H:%M:%OS"),
+                          as.POSIXct(df_imported$imported_ts, format = "%Y-%m-%d %H:%M:%OS"),
+                          units = "mins")
+  
+  p <- ggplot(df, aes(y = as.numeric(timediff), x = imported_job, fill = imported_job)) +
+    geom_bar(stat = "identity") +
+    coord_flip() + 
+    ylab("Zeit in Minuten") +
+    xlab("DQBT Job") +
+    theme_minimal() +
+    theme(legend.position = "none")
+  p
+
   ld <- grepl("LoadDedup: \\(", batch_lines)
   bl_rows <- batch_lines[ld]
   
