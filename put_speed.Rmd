@@ -1,0 +1,110 @@
+---
+title: "Analyse der CDH PUT Performance"
+output: html_notebook
+---
+
+
+```{r, include = FALSE}
+library(readr)
+library(stringr)
+library(ggplot2)
+library(data.table)
+
+f.tmp <- read_lines("e:/temp/server-2018-03-05.log")
+
+# subsetting on rows only which have a time-taken timestamp
+cleans <- grepl("No changes detected:|Record saved", f.tmp)
+clean_rows <- f.tmp[cleans]
+```
+
+```{r, include = FALSE}
+# extracting the timestamp and the time-taken 
+timestamp <- str_extract(clean_rows, "\\d{4}-\\d{2}-\\d{2}\\s\\d{2}:\\d{2}:\\d{2},\\d{3}")
+timetaken <- str_extract(clean_rows, "\\[\\d+ms\\]$") %>%
+  str_extract("\\d+")
+
+dt <- as.data.table(cbind(timestamp, timetaken))
+dt[, timetaken := as.numeric(timetaken)]
+dt[, timestamp := gsub(",", ".", dt[, timestamp])]
+dt[, timestamp := as.POSIXct(timestamp, format = "%Y-%m-%d %H:%M:%OS")]
+```
+
+Auswertung auf Basis der im Log-File vermerkten Zeiten (Zeitdauer des einzelnen Requests).
+```{r, include = FALSE}
+td_min <- min(dt[, timetaken], na.rm = TRUE)
+td_max <- max(dt[, timetaken], na.rm = TRUE)
+td_mean <- mean(dt[, timetaken], na.rm = TRUE)
+
+p1 <- ggplot(dt, aes(x = timestamp, y = timetaken)) +
+  geom_line(size = 1, colour = "blue") +
+  #  scale_x_continuous(labels = function(x) format(x, big.mark = ".", decimal.mark = ",", scientific = FALSE)) +
+  geom_hline(yintercept = td_max, size = 1, colour = "red") +
+  geom_hline(yintercept = td_mean, size = 1, colour = "green") +
+  geom_hline(yintercept = td_min, size = 1, colour = "pink") +
+  ggtitle("Put-Zeiten gemäß server.log") + 
+  xlab("Zeitpunkt") +
+  ylab("Dauer [ms]") +
+  theme_minimal()
+
+p2 <- ggplot(dt, aes(x = timetaken)) +
+  ggtitle("Verteilung der Put-Zeiten") + 
+  xlab("Put-Zeit") +
+  ylab("Häufigkeit") +
+  geom_histogram(bins = 50, fill = "blue") +
+  theme_minimal()
+
+props <-
+  cut(dt[, timetaken], c(0, 50, 100, 250, 500, 1000, 2000, 5000), dig.lab = 6) %>%
+  table() %>%
+  prop.table() %>%
+  as.data.frame()
+colnames(props) <- c("interval", "freq")
+props$freq <- props$freq * 100
+  
+p4 <- ggplot(props, aes(x = interval, y = freq)) +
+  geom_bar(fill = "blue", stat = "identity") +
+  ggtitle("Prozentualer Anteil der Put-Requests je Zeitintervall") + 
+  xlab("Zeitintervall") +
+  ylab("Prozentualer Anteil der Puts pro Intervall") +
+  theme_minimal()
+```
+
+```{r, echo = FALSE}
+paste("Schnellster Request:", td_min, "ms")
+paste("Langsamster Request:", td_max, "ms")
+paste("Durschnittliche Request-Zeit:", td_mean, "ms")
+p1
+p2
+p4
+```
+
+Darstellung auf Basis der tatsächlich verarbeiteten Requests pro Zeitintervall:
+```{r, echo = FALSE}
+interval <- "1 min"
+cutvar <- cut(dt[, timestamp], interval)
+# levels(cutvar)
+dt_split <- split(dt, cutvar)
+numputs <- unlist(lapply(dt_split, nrow))
+dt <- data.table("timeinterval" = names(dt_split), numputs)
+
+nputs_min <- min(dt[numputs > 0, numputs])
+nputs_max <- max(dt[numputs > 0, numputs])
+nputs_mean <- signif(mean(dt[numputs > 0, numputs]))
+
+p3 <- ggplot(dt, aes(x = timeinterval, y = numputs)) +
+  geom_bar(size = 1, fill = "blue", stat = "identity") +
+  geom_hline(yintercept = nputs_max, size = 1, colour = "red") +
+#  annotate("text", x = 100, y = nputs_max + 1, label = nputs_max) +
+  geom_hline(yintercept = nputs_mean, size = 1, colour = "green") +
+#  annotate("text", x = 100, y = nputs_mean + 1, label = nputs_mean) +
+  geom_hline(yintercept = nputs_min, size = 1, colour = "pink") +
+#  annotate("text", x = 100, y = nputs_min + 1, label = nputs_min) +
+  scale_x_discrete(breaks = NULL) +
+  ggtitle("Absolute Anzahl der Puts je Zeitinterval") + 
+  xlab(paste0("Zeit (", interval, ")")) +
+  ylab("Anzahl der Puts") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+p3
+```
+
