@@ -1,23 +1,29 @@
 ---
-title: "Analyse der CDH PUT Performance"
-output: html_notebook
+title: Synchronisationsgeschwindigkeit des CDH in Bezug auf die Anforderungen von
+  W&W
+output:
+  pdf_document: default
+  html_document: default
 ---
 
-
 ```{r, include = FALSE}
-library(readr)
-library(stringr)
-library(ggplot2)
-library(data.table)
+suppressPackageStartupMessages(library(readr))
+suppressPackageStartupMessages(library(stringr))
+suppressPackageStartupMessages(library(ggplot2))
+suppressPackageStartupMessages(library(data.table))
 
-f.tmp <- read_lines("e:/temp/server-2018-03-05.log")
+interval = "1 min"
 
-# subsetting on rows only which have a time-taken timestamp
+f.tmp <- read_lines("e:/temp/server-2018-03-07.log")
+
+exceptions <- grepl("Entity exception occured", f.tmp)
 cleans <- grepl("No changes detected:|Record saved", f.tmp)
 clean_rows <- f.tmp[cleans]
-```
 
-```{r, include = FALSE}
+n_nochanges <- sum(grepl("No changes detected:", clean_rows))
+n_updates <- sum(grepl("Record saved", clean_rows))
+n_exceptions <- sum(exceptions)
+
 # extracting the timestamp and the time-taken 
 timestamp <- str_extract(clean_rows, "\\d{4}-\\d{2}-\\d{2}\\s\\d{2}:\\d{2}:\\d{2},\\d{3}")
 timetaken <- str_extract(clean_rows, "\\[\\d+ms\\]$") %>%
@@ -27,10 +33,10 @@ dt <- as.data.table(cbind(timestamp, timetaken))
 dt[, timetaken := as.numeric(timetaken)]
 dt[, timestamp := gsub(",", ".", dt[, timestamp])]
 dt[, timestamp := as.POSIXct(timestamp, format = "%Y-%m-%d %H:%M:%OS")]
-```
 
-Auswertung auf Basis der im Log-File vermerkten Zeiten (Zeitdauer des einzelnen Requests).
-```{r, include = FALSE}
+ts_start <- min(dt[, timestamp], na.rm = TRUE)
+ts_end <- max(dt[, timestamp], na.rm = TRUE)
+
 td_min <- min(dt[, timetaken], na.rm = TRUE)
 td_max <- max(dt[, timetaken], na.rm = TRUE)
 td_mean <- mean(dt[, timetaken], na.rm = TRUE)
@@ -48,7 +54,7 @@ p1 <- ggplot(dt, aes(x = timestamp, y = timetaken)) +
 
 p2 <- ggplot(dt, aes(x = timetaken)) +
   ggtitle("Verteilung der Put-Zeiten") + 
-  xlab("Put-Zeit") +
+  xlab("Put-Dauer [ms]") +
   ylab("Häufigkeit") +
   geom_histogram(bins = 50, fill = "blue") +
   theme_minimal()
@@ -67,22 +73,8 @@ p4 <- ggplot(props, aes(x = interval, y = freq)) +
   xlab("Zeitintervall") +
   ylab("Prozentualer Anteil der Puts pro Intervall") +
   theme_minimal()
-```
 
-```{r, echo = FALSE}
-paste("Schnellster Request:", td_min, "ms")
-paste("Langsamster Request:", td_max, "ms")
-paste("Durschnittliche Request-Zeit:", td_mean, "ms")
-p1
-p2
-p4
-```
-
-Darstellung auf Basis der tatsächlich verarbeiteten Requests pro Zeitintervall:
-```{r, echo = FALSE}
-interval <- "1 min"
 cutvar <- cut(dt[, timestamp], interval)
-# levels(cutvar)
 dt_split <- split(dt, cutvar)
 numputs <- unlist(lapply(dt_split, nrow))
 dt <- data.table("timeinterval" = names(dt_split), numputs)
@@ -101,10 +93,83 @@ p3 <- ggplot(dt, aes(x = timeinterval, y = numputs)) +
 #  annotate("text", x = 100, y = nputs_min + 1, label = nputs_min) +
   scale_x_discrete(breaks = NULL) +
   ggtitle("Absolute Anzahl der Puts je Zeitinterval") + 
-  xlab(paste0("Zeit (", interval, ")")) +
+  xlab(paste0("Zeitintervall (", interval, ")")) +
   ylab("Anzahl der Puts") +
   theme_minimal() +
   theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+# Determine the number of seconds of the chose time-interval to correctly calculate records/second
+seconds_factor <- as.numeric(difftime(as.POSIXct(levels(cutvar)[2], format = "%Y-%m-%d %H:%M:%OS"), as.POSIXct(levels(cutvar)[1], format = "%Y-%m-%d %H:%M:%OS"), units = "secs"))
+goal <- data.frame(x = c("Vorgabe", "Ist"),
+                   y = c(2, round((nputs_mean / seconds_factor), 1)))
+
+goal$x <- factor(goal$x, levels = c("Vorgabe", "Ist"))
+
+pg <- ggplot(goal, aes(x = x, y = y, fill = x)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = y), vjust = -0.4) +
+  theme_minimal() + 
+  theme(legend.position = "none", 
+        panel.grid.minor.x = element_blank(),
+        panel.grid.minor.y = element_blank(),
+        panel.grid.major.x = element_blank(),
+        panel.grid.major.y = element_line(colour = "grey", size = .1)) +
+  ylab("") +
+  xlab("") +
+  ggtitle("Requests pro Sekunde") + 
+  scale_fill_manual("legend", values = c("Ist" = "lawngreen", "Vorgabe" = "skyblue"))
+```
+
+\vspace*{5\baselineskip} 
+
+# Ergebnis
+```{r, echo = FALSE}
+pg
+```
+\pagebreak
+
+# Grundlage der Messung
+Performance-Test der Verarbeitung von Host-Updates, die über MQSeries an den Hub geschickt werden. Hierbei kommt auch der MQAdapter zum Einsatz, der ggf. eine Anreicherung der Updates auf Basis bereits gespeicherter Informationen durchführt.
+
+### Testumgebung
+VPU (vasv mit CDH Server, und vdbv mit MongoDB)
+
+### Software-Stand
+CDH 16.2.135, Config 16.2.106
+
+### Datenbestand
+ca. 26 Mio. Quelldatensätze (47,4 Mio. incl. Golden Records)
+
+_Hinweis:_ "Leerlaufzeiten" (also Zeitintervalle ohne Requests) sind bei der Berechnung der Werte explizit ausgeschlossen.
+
+```{r, echo = FALSE}
+paste("Beginn der Messung", ts_start)
+paste("Ende der Messung", ts_end)
+paste("Anzahl gemessener Update-Requests:", length(clean_rows))
+paste("Tatsächliche Updates:", n_updates)
+paste("Requests ohne Änderungen:", n_nochanges)
+paste("Fehlerhafte Requests:", n_exceptions)
+```
+
+\pagebreak
+
+# Darstellung auf Basis der tatsächlich verarbeiteten Requests pro Zeitintervall
+```{r, echo = FALSE}
+paste("Zeitintervall:", interval)
+paste("Größte Anzahl von Requests pro Zeitintervall:", nputs_max)
+paste("Geringste Anzahl von Requests pro Zeitintervall:", nputs_min)
+paste("Durchschnittliche Anzahl von Requests pro Zeitintervall:", round(nputs_mean, 1))
 p3
 ```
 
+\pagebreak
+
+# Auswertung auf Basis der im Log-File vermerkten Zeiten (Zeitdauer der einzelnen Requests)
+```{r, echo = FALSE}
+paste("Schnellster Request:", td_min, "ms")
+paste("Langsamster Request:", td_max, "ms")
+paste("Durschnittliche Request-Zeit:", round(td_mean, 2), "ms")
+p1
+p4
+p2
+```
