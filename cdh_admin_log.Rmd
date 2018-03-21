@@ -1,21 +1,24 @@
 ---
 title: "CDH Batch Load Analyse"
 author: "Uniserv GmbH"
-date: "2018"
-output: html_document
+date: '2018'
+output:
+  html_document: default
+  pdf_document: default
 ---
 
 ```{r setup, echo = FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 
-library(lubridate)
-library(readr)
-library(stringr)
-library(ggplot2)
-library(dygraphs)
-library(knitr)
-library(plyr)
-library(tidyr)
+suppressPackageStartupMessages(library(lubridate))
+suppressPackageStartupMessages(library(readr))
+suppressPackageStartupMessages(library(stringr))
+suppressPackageStartupMessages(library(ggplot2))
+suppressPackageStartupMessages(library(dygraphs))
+suppressPackageStartupMessages(library(knitr))
+suppressPackageStartupMessages(library(plyr))
+suppressPackageStartupMessages(library(tidyr))
+suppressPackageStartupMessages(library(data.table))
 ```
 
 ```{r, include = FALSE}
@@ -49,8 +52,11 @@ prepForPlot <- function(batch_lines){
 
 Bestimmung des Start- und Endzeitpunktes. Der Batch Load umfasst folgende Schritte:
 ```{r, echo = FALSE}
-f.tmp <- read_lines("e:/temp/vasv/admin.log")
+f.tmp <- read_lines("e:/temp/generalprobe/admin.log")
 start_load_init <- grepl("START LoadInit", f.tmp)
+
+sum(start_load_init) > 0
+
 batch_start <- max(which(start_load_init))
 batch_lines <- f.tmp[-(1:batch_start - 1)]
 
@@ -59,18 +65,16 @@ start_end_lines
 ```
 Die Laufzeiten teilen sich auf wie folgt:
 ```{r, echo = FALSE}
-
 step_lines <- batch_lines[grepl(" END", batch_lines)]
 steps <- str_extract(batch_lines[grepl(" END", batch_lines)], 
                         "END \\w* in") %>%
   str_extract(" \\w* ") %>%
   str_replace_all(" ", "")
 
-
 start_end <- prepForPlot(start_end_lines)$timediff
-load_steps <- as.data.frame(cbind(step = steps, 
-                                  duration = start_end[seq(2, length(start_end), 2)], units = "mins"),
-                            stringsAsFactors = FALSE)
+load_steps <- data.frame(step = steps,
+                         duration = start_end[seq(2, length(start_end), 2)],
+                         units = "mins")
 load_steps$duration <- as.numeric(load_steps$duration)
 
 p <- ggplot(load_steps, aes(x = "", y = duration, fill = steps)) +
@@ -100,17 +104,15 @@ locked_duration <- difftime(as.POSIXct(unlock_time, format = "%Y-%m-%d %H:%M:%OS
 
 units(total_duration) <- "secs"
 paste("Gesamtlaufzeit:", 
-      day(seconds_to_period(total_duration)), "Tage,",
-      hour(seconds_to_period(total_duration)), "Stunden,",
-      minute(seconds_to_period(total_duration)), "Minuten,",
-      round(second(seconds_to_period(total_duration)), 2), "Sekunden")
+      seconds_to_period(total_duration)@day, "Tage,",
+      seconds_to_period(total_duration)@hour, "Stunden,",
+      seconds_to_period(total_duration)@minute, "Minuten")
 
 units(locked_duration) <- "secs"
 paste("Laufzeit bis zum Entsperren des Hubs:",
-      day(seconds_to_period(locked_duration)), "Tage,",
-      hour(seconds_to_period(locked_duration)), "Stunden,",
-      minute(seconds_to_period(locked_duration)), "Minuten,",
-      round(second(seconds_to_period(locked_duration)), 2), "Sekunden")
+      seconds_to_period(locked_duration)@day, "Tage,",
+      seconds_to_period(locked_duration)@hour, "Stunden,",
+      seconds_to_period(locked_duration)@minute, "Minuten")
 ```
 
 ## Load Validate Schritt
@@ -119,25 +121,36 @@ if (sum(grepl("END LoadValidate", start_end_lines)) == 1) {
   lv <- grepl("LoadValidate: Progress:", batch_lines)
   bl_rows <- batch_lines[lv]
   
-  records <- str_extract(bl_rows, "\\d+$") %>%
-    str_extract("\\d+")
-  records <- as.numeric(records)
-  
   res <- prepForPlot(bl_rows)
-  df <- as.data.frame(cbind(records, "timediff" = res$timediff))
+  dt <- data.table("timestamp" = res$timestamp, 
+                   "timediff" = as.numeric(res$timediff))
   
-  p <- ggplot(df, aes(x = records, y = timediff)) +
-    geom_line(size = 1, colour = "blue") +
-    scale_x_continuous(labels = function(x) format(x, big.mark = ".", decimal.mark = ",", scientific = FALSE)) +
+  data.frame(Minimum = res$td_min, Maximum = res$td_max, Durchschnitt = res$td_mean)
+
+  p <- ggplot(dt, aes(x = timestamp, y = timediff)) +
+    geom_point(size = 1, colour = "black") +
+    geom_smooth() +
+    scale_x_datetime(breaks = seq(round(min(dt$timestamp), "hours"),
+                                  round(max(dt$timestamp), "hours"), 
+                                  by = "1 hour")) +
     geom_hline(yintercept = res$td_max, size = 1, colour = "red") +
     geom_hline(yintercept = res$td_mean, size = 1, colour = "green") +
     geom_hline(yintercept = res$td_min, size = 1, colour = "pink") +
     ggtitle("Load Validate - Zeit je 5k Records") + 
-    xlab("Records") +
-    ylab("Zeit [sec]") +
-    theme_minimal()
-  kable(data.frame(Minimum = res$td_min, Maximum = res$td_max, Durchschnitt = res$td_mean))
+    xlab("Zeitpunkt") +
+    ylab("Zeitdauer [sec]") +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 90, hjust = 1))
   p
+  
+  dy <- dygraph(data = dt, main = "Load Validate - Zeit je 5k Records") %>%
+    dyHighlight(highlightCircleSize = 5,
+                highlightSeriesBackgroundAlpha = 0.2,
+                hideOnMouseOut = FALSE,
+                highlightSeriesOpts = list(strokeWidth = 3)) %>%
+    dyOptions(maxNumberWidth = 20) %>%
+    dyRangeSelector()
+  dy  
 }
 ```
 
@@ -147,25 +160,37 @@ if (sum(grepl("END LoadExportDescriptors", start_end_lines)) == 1) {
   led <- grepl("LoadExportDescriptors: \\(", batch_lines)
   bl_rows <- batch_lines[led]
   
-  records <- str_extract(bl_rows, "Progress: \\d+ of") %>%
-    str_extract("\\d+")
-  records <- as.numeric(records)
-  
   res <- prepForPlot(bl_rows)
-  df <- as.data.frame(cbind(records, "timediff" = res$timediff))
+
+  dt <- data.table("timestamp" = res$timestamp, 
+                   "timediff" = as.numeric(res$timediff))
   
-  p <- ggplot(df, aes(x = records, y = timediff)) +
-    geom_point(size = 1, colour = "blue") +
-    scale_x_continuous(labels = function(x) format(x, big.mark = ".", decimal.mark = ",", scientific = FALSE)) +
+  data.frame(Minimum = res$td_min, Maximum = res$td_max, Durchschnitt = res$td_mean)
+
+  p <- ggplot(dt, aes(x = timestamp, y = timediff)) +
+    geom_point(size = 1, colour = "black") +
+    geom_smooth() +
+    scale_x_datetime(breaks = seq(round(min(dt$timestamp), "hours"),
+                                  round(max(dt$timestamp), "hours"), 
+                                  by = "15 mins")) +
     geom_hline(yintercept = res$td_max, size = 1, colour = "red") +
     geom_hline(yintercept = res$td_mean, size = 1, colour = "green") +
     geom_hline(yintercept = res$td_min, size = 1, colour = "pink") +
     ggtitle("Load Export Descriptors - Zeit je 5k Records") + 
-    xlab("Records") +
-    ylab("Zeit [sec]") +
-    theme_minimal()
-  kable(data.frame(Minimum = res$td_min, Maximum = res$td_max, Durchschnitt = res$td_mean))
+    xlab("Zeitpunkt") +
+    ylab("Zeitdauer [sec]") +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 90, hjust = 1))
   p
+  
+  dy <- dygraph(data = dt, main = "Load Export Descriptors - Zeit je 5k Records") %>%
+    dyHighlight(highlightCircleSize = 5,
+                highlightSeriesBackgroundAlpha = 0.2,
+                hideOnMouseOut = FALSE,
+                highlightSeriesOpts = list(strokeWidth = 3)) %>%
+    dyOptions(maxNumberWidth = 20) %>%
+    dyRangeSelector()
+  dy  
 }
 ```
 

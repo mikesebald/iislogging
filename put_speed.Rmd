@@ -2,8 +2,8 @@
 title: Synchronisationsgeschwindigkeit des CDH in Bezug auf die Anforderungen von
   W&W
 output:
-  pdf_document: default
   html_document: default
+  pdf_document: default
 ---
 
 ```{r, include = FALSE}
@@ -14,7 +14,7 @@ suppressPackageStartupMessages(library(data.table))
 
 interval = "1 min"
 
-f.tmp <- read_lines("e:/temp/server-2018-03-07.log")
+f.tmp <- read_lines("e:/temp/vasv/server-2018-03-21.log")
 
 exceptions <- grepl("Entity exception occured", f.tmp)
 cleans <- grepl("No changes detected:|Record saved", f.tmp)
@@ -34,12 +34,23 @@ dt[, timetaken := as.numeric(timetaken)]
 dt[, timestamp := gsub(",", ".", dt[, timestamp])]
 dt[, timestamp := as.POSIXct(timestamp, format = "%Y-%m-%d %H:%M:%OS")]
 
+# Handling outliers
+#View(dt[order(-timetaken)])
+outlier_threshold <- Inf
+outlier <- dt[timetaken > outlier_threshold]
+n_outlier <- outlier[, .N]
+dt <- dt[timetaken < outlier_threshold]
+outlier_tt <- paste0("\\[", outlier[, timetaken], "ms\\]", collapse = "|")
+outlier_lines <- grepl(outlier_tt, f.tmp)
+
 ts_start <- min(dt[, timestamp], na.rm = TRUE)
 ts_end <- max(dt[, timestamp], na.rm = TRUE)
 
 td_min <- min(dt[, timetaken], na.rm = TRUE)
 td_max <- max(dt[, timetaken], na.rm = TRUE)
 td_mean <- mean(dt[, timetaken], na.rm = TRUE)
+td_median <- median(dt[, timetaken], na.rm = TRUE)
+
 
 p1 <- ggplot(dt, aes(x = timestamp, y = timetaken)) +
   geom_line(size = 1, colour = "blue") +
@@ -66,6 +77,9 @@ props <-
   as.data.frame()
 colnames(props) <- c("interval", "freq")
 props$freq <- props$freq * 100
+
+quantile(dt[, timetaken])
+
   
 p4 <- ggplot(props, aes(x = interval, y = freq)) +
   geom_bar(fill = "blue", stat = "identity") +
@@ -77,33 +91,40 @@ p4 <- ggplot(props, aes(x = interval, y = freq)) +
 cutvar <- cut(dt[, timestamp], interval)
 dt_split <- split(dt, cutvar)
 numputs <- unlist(lapply(dt_split, nrow))
-dt <- data.table("timeinterval" = names(dt_split), numputs)
+dt <- data.table("timeinterval" = as.POSIXct(names(dt_split)), numputs)
 
 nputs_min <- min(dt[numputs > 0, numputs])
 nputs_max <- max(dt[numputs > 0, numputs])
-nputs_mean <- signif(mean(dt[numputs > 0, numputs]))
+nputs_mean <- mean(dt[numputs > 0, numputs])
 
 p3 <- ggplot(dt, aes(x = timeinterval, y = numputs)) +
   geom_bar(size = 1, fill = "blue", stat = "identity") +
-  geom_hline(yintercept = nputs_max, size = 1, colour = "red") +
+  geom_smooth(colour = "yellow") +
+  scale_x_datetime(breaks = seq(round(min(dt$timeinterval), "secs"),
+                                round(max(dt$timeinterval), "secs"), 
+                                by = "5 mins")) +  
+  geom_hline(yintercept = nputs_max, size = 1, colour = "green") +
 #  annotate("text", x = 100, y = nputs_max + 1, label = nputs_max) +
-  geom_hline(yintercept = nputs_mean, size = 1, colour = "green") +
+  geom_hline(yintercept = nputs_mean, size = 1, colour = "pink") +
 #  annotate("text", x = 100, y = nputs_mean + 1, label = nputs_mean) +
-  geom_hline(yintercept = nputs_min, size = 1, colour = "pink") +
+  geom_hline(yintercept = nputs_min, size = 1, colour = "red") +
 #  annotate("text", x = 100, y = nputs_min + 1, label = nputs_min) +
-  scale_x_discrete(breaks = NULL) +
-  ggtitle("Absolute Anzahl der Puts je Zeitinterval") + 
-  xlab(paste0("Zeitintervall (", interval, ")")) +
+#  scale_x_discrete(breaks = NULL) +
+  ggtitle(paste0("Absolute Anzahl der Puts je Zeitinterval (", interval, ")")) +
+  xlab("Zeit") +
   ylab("Anzahl der Puts") +
   theme_minimal() +
   theme(axis.text.x = element_text(angle = 90, hjust = 1))
 
 # Determine the number of seconds of the chose time-interval to correctly calculate records/second
 seconds_factor <- as.numeric(difftime(as.POSIXct(levels(cutvar)[2], format = "%Y-%m-%d %H:%M:%OS"), as.POSIXct(levels(cutvar)[1], format = "%Y-%m-%d %H:%M:%OS"), units = "secs"))
+ist <- round((nputs_mean / seconds_factor), 2)
 goal <- data.frame(x = c("Vorgabe", "Ist"),
-                   y = c(2, round((nputs_mean / seconds_factor), 1)))
+                   y = c(2, ist))
 
 goal$x <- factor(goal$x, levels = c("Vorgabe", "Ist"))
+
+colour_ist = ifelse(ist < 2, "red1", "lawngreen")
 
 pg <- ggplot(goal, aes(x = x, y = y, fill = x)) +
   geom_bar(stat = "identity") +
@@ -117,7 +138,7 @@ pg <- ggplot(goal, aes(x = x, y = y, fill = x)) +
   ylab("") +
   xlab("") +
   ggtitle("Requests pro Sekunde") + 
-  scale_fill_manual("legend", values = c("Ist" = "lawngreen", "Vorgabe" = "skyblue"))
+  scale_fill_manual("legend", values = c("Ist" = colour_ist, "Vorgabe" = "skyblue"))
 ```
 
 \vspace*{5\baselineskip} 
@@ -129,16 +150,16 @@ pg
 \pagebreak
 
 # Grundlage der Messung
-Performance-Test der Verarbeitung von Host-Updates, die über MQSeries an den Hub geschickt werden. Hierbei kommt auch der MQAdapter zum Einsatz, der ggf. eine Anreicherung der Updates auf Basis bereits gespeicherter Informationen durchführt.
+Änderungen über MQSeries
 
 ### Testumgebung
-VPU (vasv mit CDH Server, und vdbv mit MongoDB)
+vasv
 
 ### Software-Stand
-CDH 16.2.135, Config 16.2.106
+CDH 16.2.140, Config 16.2.114 incl. Virtual Services Patch
 
 ### Datenbestand
-ca. 26 Mio. Quelldatensätze (47,4 Mio. incl. Golden Records)
+ca. 25,9 Mio. Quelldatensätze (46,7 Mio. incl. Golden Records)
 
 _Hinweis:_ "Leerlaufzeiten" (also Zeitintervalle ohne Requests) sind bei der Berechnung der Werte explizit ausgeschlossen.
 
@@ -149,6 +170,16 @@ paste("Anzahl gemessener Update-Requests:", length(clean_rows))
 paste("Tatsächliche Updates:", n_updates)
 paste("Requests ohne Änderungen:", n_nochanges)
 paste("Fehlerhafte Requests:", n_exceptions)
+```
+
+### Ausreisser
+```{r, echo=FALSE}
+paste0("Anzahl ausgeschlossener Ausreißer (mit Zeiten > ", outlier_threshold, " ms): ", 
+       n_outlier, 
+       " (bzw. ",
+       round((n_outlier / n_updates * 100), 1),
+       "%)")
+f.tmp[outlier_lines]
 ```
 
 \pagebreak
@@ -169,6 +200,7 @@ p3
 paste("Schnellster Request:", td_min, "ms")
 paste("Langsamster Request:", td_max, "ms")
 paste("Durschnittliche Request-Zeit:", round(td_mean, 2), "ms")
+paste("Median:", td_median, "ms")
 p1
 p4
 p2
