@@ -2,8 +2,8 @@
 title: Synchronisationsgeschwindigkeit des CDH in Bezug auf die Anforderungen von
   W&W
 output:
-  html_document: default
   pdf_document: default
+  html_document: default
 ---
 
 ```{r, include = FALSE}
@@ -12,9 +12,9 @@ suppressPackageStartupMessages(library(stringr))
 suppressPackageStartupMessages(library(ggplot2))
 suppressPackageStartupMessages(library(data.table))
 
-interval = "1 min"
+interval = "1 mins"
 
-f.tmp <- read_lines("e:/temp/vasv/server-2018-03-21.log")
+f.tmp <- read_lines("e:/temp/vasv/server-2018-03-22.log")
 
 exceptions <- grepl("Entity exception occured", f.tmp)
 cleans <- grepl("No changes detected:|Record saved", f.tmp)
@@ -24,25 +24,31 @@ n_nochanges <- sum(grepl("No changes detected:", clean_rows))
 n_updates <- sum(grepl("Record saved", clean_rows))
 n_exceptions <- sum(exceptions)
 
-# extracting the timestamp and the time-taken 
+# extracting timestamp, recordid and the time-taken 
 timestamp <- str_extract(clean_rows, "\\d{4}-\\d{2}-\\d{2}\\s\\d{2}:\\d{2}:\\d{2},\\d{3}")
+recordid <- str_extract(clean_rows, "\\[\\w*\\*.{10,11}\\]")
 timetaken <- str_extract(clean_rows, "\\[\\d+ms\\]$") %>%
   str_extract("\\d+")
 
-dt <- as.data.table(cbind(timestamp, timetaken))
+dt <- data.table(timestamp, recordid, timetaken)
 dt[, timetaken := as.numeric(timetaken)]
 dt[, timestamp := gsub(",", ".", dt[, timestamp])]
 dt[, timestamp := as.POSIXct(timestamp, format = "%Y-%m-%d %H:%M:%OS")]
 
 # Handling outliers
 #View(dt[order(-timetaken)])
-outlier_threshold <- Inf
+outlier_threshold <- 2000
 outlier <- dt[timetaken > outlier_threshold]
 n_outlier <- outlier[, .N]
 dt <- dt[timetaken < outlier_threshold]
-outlier_tt <- paste0("\\[", outlier[, timetaken], "ms\\]", collapse = "|")
-outlier_lines <- grepl(outlier_tt, f.tmp)
+# outlier_tt <- paste0("\\[", outlier[, timetaken], "ms\\]", collapse = "|")
+# outlier_lines <- grepl(outlier_tt, f.tmp)
 
+# Calculating ratio to probable validation errors
+pve_threshold <- 100
+pve <- dt[timetaken < pve_threshold]
+pve_ratio <- round(pve[, .N] / dt[, .N] * 100, 1)
+  
 ts_start <- min(dt[, timestamp], na.rm = TRUE)
 ts_end <- max(dt[, timestamp], na.rm = TRUE)
 
@@ -78,9 +84,8 @@ props <-
 colnames(props) <- c("interval", "freq")
 props$freq <- props$freq * 100
 
-quantile(dt[, timetaken])
+# quantile(dt[, timetaken])
 
-  
 p4 <- ggplot(props, aes(x = interval, y = freq)) +
   geom_bar(fill = "blue", stat = "identity") +
   ggtitle("Prozentualer Anteil der Put-Requests je Zeitintervall") + 
@@ -102,7 +107,7 @@ p3 <- ggplot(dt, aes(x = timeinterval, y = numputs)) +
   geom_smooth(colour = "yellow") +
   scale_x_datetime(breaks = seq(round(min(dt$timeinterval), "secs"),
                                 round(max(dt$timeinterval), "secs"), 
-                                by = "5 mins")) +  
+                                by = "1 mins")) +  
   geom_hline(yintercept = nputs_max, size = 1, colour = "green") +
 #  annotate("text", x = 100, y = nputs_max + 1, label = nputs_max) +
   geom_hline(yintercept = nputs_mean, size = 1, colour = "pink") +
@@ -150,13 +155,14 @@ pg
 \pagebreak
 
 # Grundlage der Messung
-Änderungen über MQSeries
+(Realistische) Änderungen aus KUMIS über MQSeries
 
 ### Testumgebung
-vasv
+vasv / vdbv
 
 ### Software-Stand
-CDH 16.2.140, Config 16.2.114 incl. Virtual Services Patch
+* CDH 16.2.141, Config 16.2.115 incl. Virtual Services Patch
+* wildcard-deletes aktiv
 
 ### Datenbestand
 ca. 25,9 Mio. Quelldatensätze (46,7 Mio. incl. Golden Records)
@@ -170,16 +176,18 @@ paste("Anzahl gemessener Update-Requests:", length(clean_rows))
 paste("Tatsächliche Updates:", n_updates)
 paste("Requests ohne Änderungen:", n_nochanges)
 paste("Fehlerhafte Requests:", n_exceptions)
+paste("Vermutlicher Anteil von Updates mit Validierungsfehlern (<", pve_threshold, "ms):", pve_ratio, "%")
+
 ```
 
-### Ausreisser
+### Ausreißer
 ```{r, echo=FALSE}
 paste0("Anzahl ausgeschlossener Ausreißer (mit Zeiten > ", outlier_threshold, " ms): ", 
        n_outlier, 
        " (bzw. ",
        round((n_outlier / n_updates * 100), 1),
        "%)")
-f.tmp[outlier_lines]
+outlier
 ```
 
 \pagebreak
