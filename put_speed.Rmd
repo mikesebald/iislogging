@@ -14,7 +14,7 @@ suppressPackageStartupMessages(library(data.table))
 
 interval = "1 mins"
 
-f.tmp <- read_lines("e:/temp/vasv/server-2018-03-22.log")
+f.tmp <- read_lines("e:/temp/vasv/server.log")
 
 exceptions <- grepl("Entity exception occured", f.tmp)
 cleans <- grepl("No changes detected:|Record saved", f.tmp)
@@ -36,8 +36,8 @@ dt[, timestamp := gsub(",", ".", dt[, timestamp])]
 dt[, timestamp := as.POSIXct(timestamp, format = "%Y-%m-%d %H:%M:%OS")]
 
 # Handling outliers
-#View(dt[order(-timetaken)])
-outlier_threshold <- 2000
+slowest_25 <- head(dt[order(-timetaken)], n = 25)
+outlier_threshold <- Inf
 outlier <- dt[timetaken > outlier_threshold]
 n_outlier <- outlier[, .N]
 dt <- dt[timetaken < outlier_threshold]
@@ -104,10 +104,10 @@ nputs_mean <- mean(dt[numputs > 0, numputs])
 
 p3 <- ggplot(dt, aes(x = timeinterval, y = numputs)) +
   geom_bar(size = 1, fill = "blue", stat = "identity") +
-  geom_smooth(colour = "yellow") +
+  geom_smooth(colour = "yellow", method = "loess") +
   scale_x_datetime(breaks = seq(round(min(dt$timeinterval), "secs"),
                                 round(max(dt$timeinterval), "secs"), 
-                                by = "1 mins")) +  
+                                by = interval)) +  
   geom_hline(yintercept = nputs_max, size = 1, colour = "green") +
 #  annotate("text", x = 100, y = nputs_max + 1, label = nputs_max) +
   geom_hline(yintercept = nputs_mean, size = 1, colour = "pink") +
@@ -123,7 +123,7 @@ p3 <- ggplot(dt, aes(x = timeinterval, y = numputs)) +
 
 # Determine the number of seconds of the chose time-interval to correctly calculate records/second
 seconds_factor <- as.numeric(difftime(as.POSIXct(levels(cutvar)[2], format = "%Y-%m-%d %H:%M:%OS"), as.POSIXct(levels(cutvar)[1], format = "%Y-%m-%d %H:%M:%OS"), units = "secs"))
-ist <- round((nputs_mean / seconds_factor), 2)
+ist <- round((nputs_mean / seconds_factor), 1)
 goal <- data.frame(x = c("Vorgabe", "Ist"),
                    y = c(2, ist))
 
@@ -155,7 +155,9 @@ pg
 \pagebreak
 
 # Grundlage der Messung
-(Realistische) Änderungen aus KUMIS über MQSeries
+(Realistische) Änderungen von Vornamen, Nachnamen,  Geburtsdaten und Adressen  über MQSeries.
+
+Mit parallel stattfindendem CDH Standard-Backup (Sicherung der record_actual)
 
 ### Testumgebung
 vasv / vdbv
@@ -177,11 +179,14 @@ paste("Tatsächliche Updates:", n_updates)
 paste("Requests ohne Änderungen:", n_nochanges)
 paste("Fehlerhafte Requests:", n_exceptions)
 paste("Vermutlicher Anteil von Updates mit Validierungsfehlern (<", pve_threshold, "ms):", pve_ratio, "%")
-
+```
+### Die 25 langsamsten Requests
+```{r, echo = FALSE}
+slowest_25
 ```
 
 ### Ausreißer
-```{r, echo=FALSE}
+```{r, echo = FALSE}
 paste0("Anzahl ausgeschlossener Ausreißer (mit Zeiten > ", outlier_threshold, " ms): ", 
        n_outlier, 
        " (bzw. ",

@@ -8,8 +8,6 @@ output:
 ---
 
 ```{r setup, echo = FALSE}
-knitr::opts_chunk$set(echo = TRUE)
-
 suppressPackageStartupMessages(library(lubridate))
 suppressPackageStartupMessages(library(readr))
 suppressPackageStartupMessages(library(stringr))
@@ -22,7 +20,7 @@ suppressPackageStartupMessages(library(data.table))
 ```
 
 ```{r, include = FALSE}
-prepForPlot <- function(batch_lines){
+prepForPlot <- function(batch_lines) {
   timestamp <- str_extract(batch_lines, "\\d{4}-\\d{2}-\\d{2}\\s\\d{2}:\\d{2}:\\d{2},\\d{3}")
   timestamp <- str_replace(timestamp, ",", ".")
   timeshift <- timestamp[c(1, 1:(length(timestamp) - 1))] %>%
@@ -35,12 +33,14 @@ prepForPlot <- function(batch_lines){
   td_min <- min(timediff, na.rm = TRUE)
   td_max <- max(timediff, na.rm = TRUE)
   td_mean <- mean(timediff, na.rm = TRUE)
+  td_median <- median(timediff, na.rm = TRUE)
   
   result_list <- list("timestamp" = timestamp,
                       "timediff" = timediff,
                       "td_min" = td_min,
                       "td_max" = td_max,
-                      "td_mean" = td_mean)
+                      "td_mean" = td_mean,
+                      "td_median" = td_median)
 
   return(result_list)
 }
@@ -52,10 +52,10 @@ prepForPlot <- function(batch_lines){
 
 Bestimmung des Start- und Endzeitpunktes. Der Batch Load umfasst folgende Schritte:
 ```{r, echo = FALSE}
-f.tmp <- read_lines("e:/temp/generalprobe/admin.log")
+f.tmp <- read_lines("e:/temp/go-live/admin.log")
 start_load_init <- grepl("START LoadInit", f.tmp)
 
-sum(start_load_init) > 0
+paste("Start eines Batch-Loads gefunden:", sum(start_load_init) > 0)
 
 batch_start <- max(which(start_load_init))
 batch_lines <- f.tmp[-(1:batch_start - 1)]
@@ -122,12 +122,12 @@ if (sum(grepl("END LoadValidate", start_end_lines)) == 1) {
   bl_rows <- batch_lines[lv]
   
   res <- prepForPlot(bl_rows)
+  
   dt <- data.table("timestamp" = res$timestamp, 
                    "timediff" = as.numeric(res$timediff))
+  #dt <- dt[!is.na(timediff)]
   
-  data.frame(Minimum = res$td_min, Maximum = res$td_max, Durchschnitt = res$td_mean)
-
-  p <- ggplot(dt, aes(x = timestamp, y = timediff)) +
+  p_lv <- ggplot(dt, aes(x = timestamp, y = timediff)) +
     geom_point(size = 1, colour = "black") +
     geom_smooth() +
     scale_x_datetime(breaks = seq(round(min(dt$timestamp), "hours"),
@@ -139,19 +139,35 @@ if (sum(grepl("END LoadValidate", start_end_lines)) == 1) {
     ggtitle("Load Validate - Zeit je 5k Records") + 
     xlab("Zeitpunkt") +
     ylab("Zeitdauer [sec]") +
+    expand_limits(y = 0) +
     theme_minimal() +
     theme(axis.text.x = element_text(angle = 90, hjust = 1))
-  p
-  
-  dy <- dygraph(data = dt, main = "Load Validate - Zeit je 5k Records") %>%
+
+  dy_lv <- dygraph(data = dt, main = "Load Validate - Zeit je 5k Records") %>%
     dyHighlight(highlightCircleSize = 5,
                 highlightSeriesBackgroundAlpha = 0.2,
                 hideOnMouseOut = FALSE,
                 highlightSeriesOpts = list(strokeWidth = 3)) %>%
     dyOptions(maxNumberWidth = 20) %>%
     dyRangeSelector()
-  dy  
 }
+```
+
+```{r, echo = FALSE}
+  paste("Minimum:", round(res$td_min, 2), units(res$td_min))
+  paste("Maximum:", round(res$td_max, 2), units(res$td_max))
+  paste("Durchschnitt:", round(res$td_mean, 2), units(res$td_mean))
+  paste("Median:", round(res$td_median, 2), units(res$td_median))
+```
+
+```{r, echo=FALSE}
+if (exists("p_lv"))
+    suppressMessages(print(p_lv))
+```
+
+```{r, echo=FALSE}
+if (exists("dy_lv"))
+    dy_lv
 ```
 
 ## Load Export Descriptors Schritt
@@ -165,9 +181,7 @@ if (sum(grepl("END LoadExportDescriptors", start_end_lines)) == 1) {
   dt <- data.table("timestamp" = res$timestamp, 
                    "timediff" = as.numeric(res$timediff))
   
-  data.frame(Minimum = res$td_min, Maximum = res$td_max, Durchschnitt = res$td_mean)
-
-  p <- ggplot(dt, aes(x = timestamp, y = timediff)) +
+  p_led <- ggplot(dt, aes(x = timestamp, y = timediff)) +
     geom_point(size = 1, colour = "black") +
     geom_smooth() +
     scale_x_datetime(breaks = seq(round(min(dt$timestamp), "hours"),
@@ -179,20 +193,37 @@ if (sum(grepl("END LoadExportDescriptors", start_end_lines)) == 1) {
     ggtitle("Load Export Descriptors - Zeit je 5k Records") + 
     xlab("Zeitpunkt") +
     ylab("Zeitdauer [sec]") +
+    expand_limits(y = 0) +
     theme_minimal() +
     theme(axis.text.x = element_text(angle = 90, hjust = 1))
-  p
-  
-  dy <- dygraph(data = dt, main = "Load Export Descriptors - Zeit je 5k Records") %>%
+
+  dy_led <- dygraph(data = dt, main = "Load Export Descriptors - Zeit je 5k Records") %>%
     dyHighlight(highlightCircleSize = 5,
                 highlightSeriesBackgroundAlpha = 0.2,
                 hideOnMouseOut = FALSE,
                 highlightSeriesOpts = list(strokeWidth = 3)) %>%
     dyOptions(maxNumberWidth = 20) %>%
     dyRangeSelector()
-  dy  
 }
 ```
+
+```{r, echo = FALSE}
+  paste("Minimum:", round(res$td_min, 2), units(res$td_min))
+  paste("Maximum:", round(res$td_max, 2), units(res$td_max))
+  paste("Durchschnitt:", round(res$td_mean, 2), units(res$td_mean))
+  paste("Median:", round(res$td_median, 2), units(res$td_median))
+```
+
+```{r, echo = FALSE}
+if (exists("p_led"))
+  suppressMessages(print(p_led))
+```
+
+```{r, echo = FALSE}
+if (exists("dy_led"))
+  dy_led
+```
+
 
 ## Load Dedup Schritt
 ```{r, echo = FALSE}
@@ -223,15 +254,14 @@ if (sum(grepl("END LoadDedup", start_end_lines)) == 1) {
   df$timediff <- difftime(as.POSIXct(df_finished$finished_ts, format = "%Y-%m-%d %H:%M:%OS"),
                           as.POSIXct(df_imported$imported_ts, format = "%Y-%m-%d %H:%M:%OS"),
                           units = "mins")
-  
-  p <- ggplot(df, aes(y = as.numeric(timediff), x = imported_job, fill = imported_job)) +
+
+  p_dqbt <- ggplot(df, aes(y = as.numeric(timediff), x = imported_job, fill = imported_job)) +
     geom_bar(stat = "identity") +
     coord_flip() + 
     ylab("Zeit in Minuten") +
     xlab("DQBT Job") +
     theme_minimal() +
     theme(legend.position = "none")
-  p
 
   ld <- grepl("LoadDedup: \\(", batch_lines)
   bl_rows <- batch_lines[ld]
@@ -241,21 +271,55 @@ if (sum(grepl("END LoadDedup", start_end_lines)) == 1) {
   records <- as.numeric(records)
   
   res <- prepForPlot(bl_rows)
-  df <- as.data.frame(cbind(records, "timediff" = res$timediff))
   
-  p <- ggplot(df, aes(x = records, y = timediff)) +
+  dt <- data.table("timestamp" = res$timestamp, "timediff" = as.numeric(res$timediff))
+  
+  p_ldd <- ggplot(dt, aes(x = timestamp, y = timediff)) +
     geom_point(size = 1, colour = "blue") +
-    scale_x_continuous(labels = function(x) format(x, big.mark = ".", decimal.mark = ",", scientific = FALSE)) +
+    scale_x_datetime(breaks = seq(round(min(dt$timestamp), "hours"),
+                                  round(max(dt$timestamp), "hours"), 
+                                  by = "5 mins")) +
     geom_hline(yintercept = res$td_max, size = 1, colour = "red") +
     geom_hline(yintercept = res$td_mean, size = 1, colour = "green") +
     geom_hline(yintercept = res$td_min, size = 1, colour = "pink") +
     ggtitle("Load Dedup - Zeit je 10k Records") + 
     xlab("Records") +
     ylab("Zeit [sec]") +
-    theme_minimal()
-  kable(data.frame(Minimum = res$td_min, Maximum = res$td_max, Durchschnitt = res$td_mean))
-  p
+    expand_limits(y = 0) +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 90, hjust = 1))
+  
+  dy_ldd <- dygraph(data = dt, main = "Load Deduplication - Zeit je 10k Records") %>%
+    dyHighlight(highlightCircleSize = 5,
+                highlightSeriesBackgroundAlpha = 0.2,
+                hideOnMouseOut = FALSE,
+                highlightSeriesOpts = list(strokeWidth = 3)) %>%
+    dyOptions(maxNumberWidth = 20) %>%
+    dyRangeSelector()
 }
+```
+
+```{r, echo = FALSE}
+  paste("Minimum:", round(res$td_min, 2), units(res$td_min))
+  paste("Maximum:", round(res$td_max, 2), units(res$td_max))
+  paste("Durchschnitt:", round(res$td_mean, 2), units(res$td_mean))
+  paste("Median:", round(res$td_median, 2), units(res$td_median))
+```
+
+Laufzeiten der einzelnen DQBT-Jobs:
+```{r, echo = FALSE}
+if(exists("p_dqbt"))
+  p_dqbt
+```
+
+```{r, echo = FALSE}
+if(exists("p_ldd"))
+  suppressMessages(print(p_ldd))
+```
+
+```{r, echo = FALSE}
+if(exists("dy_ldd"))
+  dy_ldd
 ```
 
 ## Load Store Schritt
@@ -269,9 +333,15 @@ if (sum(grepl("END LoadStore", start_end_lines)) == 1) {
   records <- as.numeric(records)
   
   res <- prepForPlot(bl_rows)
-  df <- as.data.frame(cbind(records, "timediff" = res$timediff))
   
-  p <- ggplot(df, aes(x = records, y = timediff)) +
+  paste("Minimum:", round(res$td_min, 2), units(res$td_min))
+  paste("Maximum:", round(res$td_max, 2), units(res$td_max))
+  paste("Durchschnitt:", round(res$td_mean, 2), units(res$td_mean))
+  paste("Median:", round(res$td_median, 2), units(res$td_median))
+
+  df <- data.frame("records" = records, "timediff" = res$timediff)
+  
+  p_ls <- ggplot(df, aes(x = records, y = timediff)) +
     geom_point(size = 1, colour = "blue") +
     scale_x_continuous(labels = function(x) format(x, big.mark = ".", decimal.mark = ",", scientific = FALSE)) +
     geom_hline(yintercept = res$td_max, size = 1, colour = "red") +
@@ -280,11 +350,16 @@ if (sum(grepl("END LoadStore", start_end_lines)) == 1) {
     ggtitle("Load Store - Zeit je 1k Records") + 
     xlab("Records") +
     ylab("Zeit [sec]") +
+    expand_limits(y = 0) +
     theme_minimal()
-  kable(data.frame(Minimum = res$td_min, Maximum = res$td_max, Durchschnitt = res$td_mean))
-  p
 }
 ```
+
+```{r, echo=FALSE}
+if (exists("p_ls"))
+  p_ls
+```
+
 
 ## Create Match Index Schritt
 ```{r, echo = FALSE}
