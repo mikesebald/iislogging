@@ -14,7 +14,7 @@ suppressPackageStartupMessages(library(data.table))
 suppressPackageStartupMessages(library(dygraphs))
 suppressPackageStartupMessages(library(knitr))
 
-interval = "60 mins"
+interval = "24 hours"
 outlier_threshold <- Inf
 
 
@@ -46,7 +46,10 @@ n_outlier <- outlier[, .N]
 dt <- dt[timetaken < outlier_threshold]
 
 # Reporting on a by-day basis
-by_day <- split(dt, cut(dt[, timestamp], "day"))
+timeOffset <- 60 * 60 * 6
+by_day <- split(dt, cut(dt[, timestamp] - timeOffset, "day"))
+# min(by_day[[2]][, timestamp])
+# max(by_day[[2]][, timestamp])
 
 min_by_day <- lapply(by_day, function(x) { min(x[, timetaken])})
 max_by_day <- lapply(by_day, function(x) { max(x[, timetaken])})
